@@ -6,6 +6,7 @@
 ---
 
 ## 🚀 Key Highlights
+
 * **Physics-Guided Hybrid AI**: Combines WMO-No. 8 standards, atmospheric thermodynamics (Magnus-Tetens Dew Point, Vapor Pressure Deficit), and Multivariate Machine Learning (Isolation Forest).
 * **Genuine Storms vs Sensor Faults**: Cleanly disentangles severe convective downbursts and cold fronts from sensor hardware failures, achieving **0% false alarm rate on genuine storm events**.
 * **Edge AI for ESP32**: Includes a zero-dependency C/C++ embedded library (`edge/esp32_anomaly_detector.h`) with $< 0.1\text{ ms}$ latency and $< 2\text{ KB}$ RAM footprint.
@@ -16,6 +17,7 @@
 ---
 
 ## 🛠️ Project Structure
+
 ```
 ├── app.py                      # Interactive Streamlit Web Dashboard
 ├── main.py                     # CLI for streaming demo and CSV evaluation
@@ -43,28 +45,33 @@
 ## ⚡ Quickstart
 
 ### 1. Launch the Web Dashboard
+
 ```bash
 streamlit run app.py
 ```
+
 Open `http://localhost:8501` to test the live stream and on-the-fly **Anomaly Injection Studio**.
 
-
 ### 2. Run the Benchmark
+
 ```bash
 python benchmark.py
 ```
 
 ### 3. Run Unit Tests
+
 ```bash
 python -m unittest discover tests
 ```
 
 ### 4. Interactive Terminal Demo
+
 ```bash
 python main.py --demo
 ```
 
 ### 5. Evaluate Any CSV File
+
 ```bash
 python main.py --evaluate --file your_station_data.csv
 ```
