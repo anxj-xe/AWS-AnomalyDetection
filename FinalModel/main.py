@@ -112,8 +112,8 @@ def generate_benchmark_csv(output_path: str = "data/aws_benchmark_dataset.csv"):
     print(f"[SUCCESS] Dataset saved to {output_path} ({len(df)} rows).")
 
 
-def evaluate_csv_file(file_path: str):
-    """Process and evaluate anomalies on any input CSV file."""
+def evaluate_csv_file(file_path: str, progress_every: int = 1000):
+    """Process and evaluate anomalies on any input CSV file, with live progress."""
     print(f"[INFO] Loading {file_path}...")
     df = pd.read_csv(file_path)
     required = ['temperature', 'pressure', 'humidity']
@@ -122,12 +122,36 @@ def evaluate_csv_file(file_path: str):
             print(f"[ERROR] Missing required column: {col}")
             sys.exit(1)
 
+    has_ts = 'timestamp' in df.columns
+    if has_ts:
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+
     detector = AWSAnomalyDetector()
     print("[INFO] Training baseline on input data...")
     detector.fit(df.head(min(1000, len(df))))
 
-    print("[INFO] Evaluating observations...")
-    reports = detector.process_dataframe(df)
+    total_rows = len(df)
+    print(f"[INFO] Evaluating {total_rows:,} observations...")
+    reports = []
+    start_time = time.time()
+
+    for i, row in enumerate(df.itertuples(index=False)):
+        t = row.temperature
+        p = row.pressure
+        rh = row.humidity
+        ts = row.timestamp if has_ts else None
+
+        report = detector.process_observation(t, p, rh, timestamp=ts)
+        reports.append(report)
+
+        if (i + 1) % progress_every == 0 or (i + 1) == total_rows:
+            elapsed = time.time() - start_time
+            pct = (i + 1) / total_rows * 100
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            remaining = total_rows - (i + 1)
+            eta = remaining / rate if rate > 0 else 0
+            print(f"[PROGRESS] {i+1:,}/{total_rows:,} rows ({pct:5.1f}%) | "
+                  f"{elapsed:6.1f}s elapsed | ~{eta:6.1f}s remaining | {rate:,.0f} rows/s")
 
     anomalies = [r for r in reports if r.is_anomaly]
     storms = [r for r in reports if r.is_weather_event]
@@ -154,12 +178,13 @@ if __name__ == "__main__":
     parser.add_argument("--generate-data", action="store_true", help="Generate benchmark dataset CSV")
     parser.add_argument("--evaluate", action="store_true", help="Evaluate anomalies on a CSV file")
     parser.add_argument("--file", type=str, default="data/aws_benchmark_dataset.csv", help="CSV file path")
+    parser.add_argument("--progress-every", type=int, default=1000, help="Print progress every N rows during --evaluate")
 
     args = parser.parse_args()
 
     if args.generate_data:
         generate_benchmark_csv(args.file)
     elif args.evaluate:
-        evaluate_csv_file(args.file)
+        evaluate_csv_file(args.file, progress_every=args.progress_every)
     else:
         run_demo_simulation()

@@ -31,12 +31,36 @@ class QCLimits:
     max_delta_rh_synoptic: float = 25.0     # % per 15-min
 
     # Persistence / Flatline criteria
+    # Run-length threshold source: WMO persistence test (Zahumensky, 2004), as
+    # implemented with a two-tier scheme in Guidelines on Quality Control Procedures
+    # for Data from Automatic Weather Stations - runs >=3 identical flagged SUSPECT,
+    # runs >7 classified FAILURE. We hard-flag at the FAILURE tier (>7 -> 8) rather
+    # than the SUSPECT tier (>=3 -> 4), since a single-tier system should not treat
+    # a 4-sample repeat with the same 0.90 severity as a confirmed dead sensor.
     min_stdev_window_len: int = 5           # Window length for variance check
-    min_identical_run: int = 4              # Number of consecutive identical samples for rapid flatline check
+    min_identical_run: int = 8              # WMO/Zahumensky FAILURE-tier persistence threshold
+                                             # (default - applies to temperature & humidity)
+    # Pressure needs its OWN threshold: this station's pressure channel has only
+    # ~1.0 hPa reporting resolution (measured via diagnose_sensor_resolution.py),
+    # which combined with normally slow pressure drift produces genuinely NORMAL
+    # flatline runs up to 28 samples long (7 hours at 15-min sampling) with 32.2%
+    # of all natural runs already >= 8. A shared threshold of 8 misflags a third
+    # of legitimate pressure behavior. Set above the empirically observed natural
+    # maximum (28) so only runs clearly longer than anything seen in real, healthy
+    # data get flagged. Re-measure this per-station/per-sensor-model if the
+    # instrument changes - it is NOT a WMO-mandated number, it is dataset-derived.
+    min_identical_run_pressure: int = 32
     identical_eps: float = 1e-4             # Max range treated as bit-identical
-    min_temp_stdev: float = 0.005           # deg C (realistic limit, catches deadbands with minor noise)
-    min_pressure_stdev: float = 0.005       # hPa
-    min_rh_stdev: float = 0.015             # %
+    # Deadband stdev thresholds: NOT from the WMO persistence citation above - these
+    # must instead be derived from this station's actual sensor resolution/precision
+    # spec (datasheet), since a physically valid noise floor cannot be tighter than
+    # the instrument's own reporting resolution. Placeholder values below assume
+    # ~0.1 deg C / ~0.1 hPa / ~1% RH reporting resolution - replace with your
+    # sensor's actual datasheet figures, or measure empirically with
+    # diagnose_sensor_resolution.py against real station data.
+    min_temp_stdev: float = 0.05            # deg C
+    min_pressure_stdev: float = 0.05        # hPa
+    min_rh_stdev: float = 0.15              # %
 
 
 @dataclass
@@ -184,22 +208,31 @@ class QualityControlEngine:
         window_len = self.limits.min_stdev_window_len
 
         sensors = [
-            ("temperature", t_seq, self.limits.min_temp_stdev, "°C"),
-            ("pressure", p_seq, self.limits.min_pressure_stdev, "hPa"),
-            ("humidity", rh_seq, self.limits.min_rh_stdev, "%")
+            ("temperature", t_seq, self.limits.min_temp_stdev, "°C", run_len),
+            ("pressure", p_seq, self.limits.min_pressure_stdev, "hPa", self.limits.min_identical_run_pressure),
+            ("humidity", rh_seq, self.limits.min_rh_stdev, "%", run_len)
         ]
 
-        for s_name, seq, min_std, unit in sensors:
-            # 1. Rapid Flatline: consecutive identical / near-identical values (N >= 4)
-            if len(seq) >= run_len:
-                w_run = seq[-run_len:]
+        for s_name, seq, min_std, unit, sensor_run_len in sensors:
+            # 1. Rapid Flatline: consecutive identical / near-identical values
+            if len(seq) >= sensor_run_len:
+                w_run = seq[-sensor_run_len:]
                 if (max(w_run) - min(w_run)) < self.limits.identical_eps:
                     return False, s_name, (
-                        f"{s_name.capitalize()} sensor flatline/frozen: {run_len} consecutive identical "
+                        f"{s_name.capitalize()} sensor flatline/frozen: {sensor_run_len} consecutive identical "
                         f"readings (stuck at {w_run[-1]:.2f}{unit})"
                     ), 0.90
 
             # 2. Low-variance deadband check over sliding window (N >= 5)
+            # Skipped for pressure: this test catches "near-constant but not
+            # exactly identical" drift, which is meaningless for a channel
+            # quantized to 1.0 hPa - a short window during a real, long, natural
+            # flatline (see min_identical_run_pressure above) still reads std=0
+            # here, so this check would keep over-triggering on pressure even
+            # after fixing test 1. The properly-calibrated exact-match test
+            # above is sufficient and correct for this sensor's resolution.
+            if s_name == "pressure":
+                continue
             if len(seq) >= window_len:
                 w_var = seq[-window_len:]
                 s_std = float(np.std(w_var))

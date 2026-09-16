@@ -418,7 +418,7 @@ if data_source_type == "Real AWS Dataset Streamer (CSV Replay)":
         progress_val = min(1.0, curr_idx / total_rows)
         st.sidebar.progress(progress_val)
         st.sidebar.caption(f"CSV Replay: Row {curr_idx} / {total_rows} ({progress_val*100:.1f}%)")
-        if st.sidebar.button("Reset CSV Replay", use_container_width=True):
+        if st.sidebar.button("Reset CSV Replay", width='stretch'):
             st.session_state.csv_stream_idx = 0
             st.sidebar.info("Replay reset to row 0.")
 
@@ -445,12 +445,12 @@ else:
 
 st.sidebar.markdown('<div class="sidebar-section-title">Telemetry Stream Controls</div>', unsafe_allow_html=True)
 col_s1, col_s2 = st.sidebar.columns(2)
-if col_s1.button(f"Step (+{active_interval_mins}m)", use_container_width=True):
+if col_s1.button(f"Step (+{active_interval_mins}m)", width='stretch'):
     st.session_state.step_once = True
 else:
     st.session_state.step_once = False
 
-stream_toggle = col_s2.button("Toggle Stream", use_container_width=True)
+stream_toggle = col_s2.button("Toggle Stream", width='stretch')
 if stream_toggle:
     st.session_state.is_streaming = not st.session_state.is_streaming
 
@@ -479,7 +479,7 @@ if "Stuck" in inject_choice:
 elif "Drift" in inject_choice:
     drift_sensor_choice = st.sidebar.selectbox("Sensor to Drift", ["temperature", "humidity", "pressure"], format_func=lambda x: f"Drift {x.capitalize()}")
 
-if st.sidebar.button("Trigger Selected Scenario", use_container_width=True):
+if st.sidebar.button("Trigger Selected Scenario", width='stretch'):
     if "None" in inject_choice:
         st.session_state.active_fault = None
         st.sidebar.success("Cleared all injections. Nominal stream resumed.")
@@ -862,7 +862,7 @@ with tab_telemetry:
     fig.update_xaxes(gridcolor="rgba(148, 163, 184, 0.12)", zerolinecolor="rgba(148, 163, 184, 0.2)")
     fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.12)", zerolinecolor="rgba(148, 163, 184, 0.2)")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch', key="main_telemetry_chart")
 
 with tab_xai:
     st.markdown("### Explainable AI (TreeSHAP) & Root-Cause Diagnostics")
@@ -902,7 +902,7 @@ with tab_xai:
                     font=dict(color="#E2E8F0")
                 )
                 fig_xai.update_xaxes(gridcolor="rgba(148, 163, 184, 0.12)")
-                st.plotly_chart(fig_xai, use_container_width=True)
+                st.plotly_chart(fig_xai, width='stretch', key=f"xai_chart_{selected_idx}")
             else:
                 st.info("Feature attribution is calculated for multi-variate statistical events.")
 
@@ -933,7 +933,7 @@ with tab_health:
                 plot_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="#E2E8F0")
             )
-            st.plotly_chart(fig_g, use_container_width=True)
+            st.plotly_chart(fig_g, width='stretch', key=f"gauge_{s_name}")
             st.markdown(f"**Operational Status:** `{s_stat.status}`")
             st.info(f"**Maintenance Recommendation:**\n\n{s_stat.recommendation}")
 
@@ -942,7 +942,7 @@ with tab_audit:
     if len(st.session_state.anomaly_log) > 0:
         log_df = pd.DataFrame(st.session_state.anomaly_log)
         disp_cols = ['step', 'timestamp', 'anomaly_type', 'faulty_sensor', 'confidence', 'temperature', 'pressure', 'humidity', 'explanation']
-        st.dataframe(log_df[disp_cols], use_container_width=True)
+        st.dataframe(log_df[disp_cols], width='stretch')
         col_d1, col_d2 = st.columns(2)
         with col_d1:
             st.download_button(
@@ -950,7 +950,7 @@ with tab_audit:
                 data=log_df[disp_cols].to_csv(index=False).encode('utf-8'),
                 file_name="aws_incident_audit.csv",
                 mime="text/csv",
-                use_container_width=True
+                width='stretch'
             )
         with col_d2:
             full_df = pd.DataFrame(st.session_state.history)
@@ -959,7 +959,7 @@ with tab_audit:
                 data=full_df.to_csv(index=False).encode('utf-8'),
                 file_name="aws_imputed_telemetry.csv",
                 mime="text/csv",
-                use_container_width=True
+                width='stretch'
             )
     else:
         st.info("No incidents recorded yet. Nominal observations are streaming.")
