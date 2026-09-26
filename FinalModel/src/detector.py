@@ -375,13 +375,28 @@ class AWSAnomalyDetector:
                     if (abs(humidity - self.last_pre_event_rh) / dt_pre_rh) <= self.qc_engine.limits.max_delta_rh_per_min:
                         prev_rh = self.last_pre_event_rh
                         dt_rh = dt_pre_rh
+      
 
-        # Calculate parameter shifts over 30-min window
-        lookback_idx = max(0, len(self.history_temp) - int(30 / max(1, delta_mins)))
-        d_temp_30 = temperature - self.history_temp[lookback_idx] if self.history_temp else 0.0
-        d_press_30 = pressure - self.history_press[lookback_idx] if self.history_press else 0.0
-        d_rh_30 = humidity - self.history_rh[lookback_idx] if self.history_rh else 0.0
+        # Calculate parameter shifts over a 30-minute window.
+        # Safely handle short history during startup and 15-min <-> 1-min transitions.
+        samples_30 = max(1, int(round(30.0 / max(1.0, delta_mins))))
 
+        if self.history_temp and self.history_press and self.history_rh:
+            temp_idx = max(0, len(self.history_temp) - samples_30)
+            press_idx = max(0, len(self.history_press) - samples_30)
+            rh_idx = max(0, len(self.history_rh) - samples_30)
+
+            temp_idx = min(temp_idx, len(self.history_temp) - 1)
+            press_idx = min(press_idx, len(self.history_press) - 1)
+            rh_idx = min(rh_idx, len(self.history_rh) - 1)
+
+            d_temp_30 = temperature - self.history_temp[temp_idx]
+            d_press_30 = pressure - self.history_press[press_idx]
+            d_rh_30 = humidity - self.history_rh[rh_idx]
+        else:
+            d_temp_30 = 0.0
+            d_press_30 = 0.0
+            d_rh_30 = 0.0
         # TIER 2 CHECK: Is this a genuine meteorological event (convective storm/cold front)?
         is_storm, storm_conf, storm_desc = AtmosphericPhysics.detect_storm_signature(
             d_temp_30, d_press_30, d_rh_30, window_minutes=30.0
