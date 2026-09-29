@@ -1,0 +1,5 @@
+timestamp,event,reason,confidence
+2016-06-15 13:30:00,15MIN_TO_1MIN,Passed: Severe Meteorological Event Classified. Likely Meteorological Event: Frontal passage or precipitation onset (Significant convective cooling (-6.0°C in 30m); Rapid humidity surge (+20.2% in 30m)),0.515
+2016-06-15 16:29:00,1MIN_TO_15MIN,Atmosphere stabilized for 60.0 minutes without active storm pulse,
+2016-06-18 15:17:00,15MIN_TO_1MIN,Passed: Severe Meteorological Event Classified. Likely Meteorological Event: Frontal passage or precipitation onset (Significant convective cooling (-5.1°C in 30m); Rapid humidity surge (+17.1% in 30m)),0.453
+2016-06-19 15:38:00,1MIN_TO_15MIN,Atmosphere stabilized for 60.0 minutes without active storm pulse,

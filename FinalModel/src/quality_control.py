@@ -6,6 +6,7 @@ Implements deterministic plausibility, step-test, persistence, and physical cons
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import numpy as np
+import pandas as pd
 from src.physics import AtmosphericPhysics
 
 
@@ -31,36 +32,13 @@ class QCLimits:
     max_delta_rh_synoptic: float = 25.0     # % per 15-min
 
     # Persistence / Flatline criteria
-    # Run-length threshold source: WMO persistence test (Zahumensky, 2004), as
-    # implemented with a two-tier scheme in Guidelines on Quality Control Procedures
-    # for Data from Automatic Weather Stations - runs >=3 identical flagged SUSPECT,
-    # runs >7 classified FAILURE. We hard-flag at the FAILURE tier (>7 -> 8) rather
-    # than the SUSPECT tier (>=3 -> 4), since a single-tier system should not treat
-    # a 4-sample repeat with the same 0.90 severity as a confirmed dead sensor.
     min_stdev_window_len: int = 5           # Window length for variance check
-    min_identical_run: int = 8              # WMO/Zahumensky FAILURE-tier persistence threshold
-                                             # (default - applies to temperature & humidity)
-    # Pressure needs its OWN threshold: this station's pressure channel has only
-    # ~1.0 hPa reporting resolution (measured via diagnose_sensor_resolution.py),
-    # which combined with normally slow pressure drift produces genuinely NORMAL
-    # flatline runs up to 28 samples long (7 hours at 15-min sampling) with 32.2%
-    # of all natural runs already >= 8. A shared threshold of 8 misflags a third
-    # of legitimate pressure behavior. Set above the empirically observed natural
-    # maximum (28) so only runs clearly longer than anything seen in real, healthy
-    # data get flagged. Re-measure this per-station/per-sensor-model if the
-    # instrument changes - it is NOT a WMO-mandated number, it is dataset-derived.
-    min_identical_run_pressure: int = 32
+    min_identical_run: int = 4              # Default: 4 consecutive identical readings triggers flatline
+    min_identical_run_pressure: int = 4     # Default: 4 (or learned dynamically from station training data)
     identical_eps: float = 1e-4             # Max range treated as bit-identical
-    # Deadband stdev thresholds: NOT from the WMO persistence citation above - these
-    # must instead be derived from this station's actual sensor resolution/precision
-    # spec (datasheet), since a physically valid noise floor cannot be tighter than
-    # the instrument's own reporting resolution. Placeholder values below assume
-    # ~0.1 deg C / ~0.1 hPa / ~1% RH reporting resolution - replace with your
-    # sensor's actual datasheet figures, or measure empirically with
-    # diagnose_sensor_resolution.py against real station data.
-    min_temp_stdev: float = 0.05            # deg C
-    min_pressure_stdev: float = 0.05        # hPa
-    min_rh_stdev: float = 0.15              # %
+    min_temp_stdev: float = 0.005           # deg C
+    min_pressure_stdev: float = 0.005       # hPa
+    min_rh_stdev: float = 0.01              # %
 
 
 @dataclass
@@ -83,6 +61,101 @@ class QualityControlEngine:
 
     def __init__(self, limits: Optional[QCLimits] = None):
         self.limits = limits or QCLimits()
+        self.adaptive_profile: Optional[Dict[str, Any]] = None
+
+    def set_adaptive_profile(self, profile: Optional[Dict[str, Any]]):
+        """Set or clear the data-driven sensor persistence profile."""
+        self.adaptive_profile = profile
+
+    @staticmethod
+    def _minimum_real_change(values: np.ndarray) -> Optional[float]:
+        """Smallest non-zero observed change in the training window."""
+        values = pd.Series(values).dropna().to_numpy(dtype=float)
+        if len(values) < 2:
+            return None
+        diffs = np.abs(np.diff(values))
+        diffs = diffs[diffs > np.finfo(float).eps]
+        if len(diffs) == 0:
+            return None
+        return float(np.min(diffs))
+
+    @staticmethod
+    def _consecutive_equal_run_lengths(values: np.ndarray, tolerance: float) -> List[int]:
+        """Return lengths of consecutive approximately-equal runs using fast vectorization."""
+        arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if len(arr) == 0:
+            return []
+        if len(arr) == 1:
+            return [1]
+        diffs = np.abs(np.diff(arr)) > tolerance
+        change_idx = np.where(diffs)[0]
+        run_lengths = np.diff(np.concatenate(([-1], change_idx, [len(arr) - 1])))
+        return run_lengths.tolist()
+
+    @staticmethod
+    def _median_rolling_std(values: np.ndarray, window: int = 5) -> Optional[float]:
+        """Median rolling standard deviation used as a learned variability descriptor."""
+        series = pd.Series(values[:10000], dtype=float)
+        stds = series.rolling(window).std().dropna()
+        if len(stds) == 0:
+            return None
+        return float(stds.median())
+
+    @classmethod
+    def learn_sensor_persistence_profile(cls, train_df: pd.DataFrame, max_samples: int = 20000) -> Optional[Dict[str, Any]]:
+        """
+        Learn sensor-specific persistence characteristics from TRAINING DATA ONLY.
+        Discovers empirical reporting resolution, normal 99th-percentile run lengths,
+        and derives optimal stuck sensor thresholds.
+        """
+        if train_df is None or len(train_df) < 10:
+            return None
+
+        # Sample up to max_samples for instantaneous calibration on large datasets
+        df_sample = train_df.iloc[:max_samples] if len(train_df) > max_samples else train_df
+
+        profile = {}
+        columns = {
+            "temperature": "temperature",
+            "pressure": "pressure",
+            "humidity": "humidity",
+        }
+
+        for sensor, column in columns.items():
+            if column not in df_sample.columns:
+                continue
+            values = pd.to_numeric(df_sample[column], errors="coerce").dropna().to_numpy(dtype=float)
+            if len(values) < 6:
+                return None
+
+            min_step = cls._minimum_real_change(values)
+            if min_step is None or not np.isfinite(min_step) or min_step <= 0:
+                continue
+
+            rolling_std = cls._median_rolling_std(values, window=5)
+            if rolling_std is None or not np.isfinite(rolling_std):
+                continue
+
+            equality_tolerance = min_step * 0.25
+            run_lengths = cls._consecutive_equal_run_lengths(values, equality_tolerance)
+            if not run_lengths:
+                continue
+
+            normal_run_q99 = float(np.percentile(run_lengths, 99.0))
+            learned_run_limit = max(6, int(np.ceil(normal_run_q99)) + 1)
+            flatness_std_limit = max(equality_tolerance * 0.5, rolling_std * 0.05)
+
+            profile[sensor] = {
+                "minimum_real_change": float(min_step),
+                "median_rolling_5_std": float(rolling_std),
+                "normal_run_q99": normal_run_q99,
+                "learned_run_limit": learned_run_limit,
+                "equality_tolerance": float(equality_tolerance),
+                "flatness_std_limit": float(flatness_std_limit),
+            }
+
+        return profile if profile else None
 
     def check_plausibility(self, temp: Optional[float], 
                           pressure: Optional[float], 
@@ -203,6 +276,45 @@ class QualityControlEngine:
         t_seq = temp_history + ([curr_temp] if curr_temp is not None else [])
         p_seq = press_history + ([curr_pressure] if curr_pressure is not None else [])
         rh_seq = rh_history + ([curr_rh] if curr_rh is not None else [])
+
+        # If an adaptive profile was learned from training data, evaluate against learned sensor characteristics
+        if self.adaptive_profile is not None:
+            histories = {
+                "temperature": (t_seq, "°C"),
+                "pressure": (p_seq, "hPa"),
+                "humidity": (rh_seq, "%"),
+            }
+            window_len = self.limits.min_stdev_window_len
+            for sensor, (seq, unit) in histories.items():
+                if len(seq) < window_len:
+                    continue
+                cfg = self.adaptive_profile.get(sensor)
+                if cfg is None:
+                    continue
+                values = np.asarray(seq, dtype=float)
+                tol = cfg["equality_tolerance"]
+                run_limit = cfg["learned_run_limit"]
+                std_limit = cfg["flatness_std_limit"]
+
+                # Count current approximately-equal run at end of history
+                current_run = 1
+                for i in range(len(values) - 1, 0, -1):
+                    if abs(values[i] - values[i - 1]) <= tol:
+                        current_run += 1
+                    else:
+                        break
+
+                if current_run >= run_limit:
+                    recent = values[-window_len:]
+                    recent_std = float(np.std(recent))
+                    if recent_std <= std_limit:
+                        return False, sensor, (
+                            f"{sensor.capitalize()} sensor frozen: remained within learned "
+                            f"resolution for {current_run} consecutive readings "
+                            f"(learned threshold={run_limit}; window std={recent_std:.5f}{unit})"
+                        ), 0.85
+
+            return True, "", "Sensors exhibit expected data-derived variation", 0.0
 
         run_len = self.limits.min_identical_run
         window_len = self.limits.min_stdev_window_len

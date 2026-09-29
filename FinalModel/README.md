@@ -8,6 +8,9 @@
 ## 🚀 Key Highlights
 
 * **Physics-Guided Hybrid AI**: Combines WMO-No. 8 standards, atmospheric thermodynamics (Magnus-Tetens Dew Point, Vapor Pressure Deficit), and Multivariate Machine Learning (Isolation Forest).
+* **Sensor-Aware Persistence Calibration**: Automatically learns physical sensor reporting resolution and 99th-percentile flatline run lengths from the training window, eliminating false stuck-sensor alarms on coarsely-quantized barometers.
+* **Adaptive Dual-Rate Replay (15-min Routine / 1-min Storm)**: Operates at standard 15-minute synoptic intervals to save ~93% telemetry and compute bandwidth, and autonomously switches to 1-minute high-frequency mode during convective storms and squalls.
+* **Strict Anti-Leakage Train/Test Engine**: Interactive or CLI-driven date window selection guaranteeing zero data leakage and strict chronological integrity (`Test Start > Train End`).
 * **Genuine Storms vs Sensor Faults**: Cleanly disentangles severe convective downbursts and cold fronts from sensor hardware failures, achieving **0% false alarm rate on genuine storm events**.
 * **Edge AI for ESP32**: Includes a zero-dependency C/C++ embedded library (`edge/esp32_anomaly_detector.h`) with $< 0.1\text{ ms}$ latency and $< 2\text{ KB}$ RAM footprint.
 * **Explainable AI (XAI)**: Feature attribution scores (TreeSHAP) and natural language diagnostic rationale for field engineers.
@@ -19,14 +22,16 @@
 ## 🛠️ Project Structure
 
 ```
-├── app.py                      # Interactive Streamlit Web Dashboard
-├── main.py                     # CLI for streaming demo and CSV evaluation
+├── app.py                      # Interactive Streamlit Web Dashboard (SkyGuard)
+├── main.py                     # CLI for streaming demo and adaptive CSV evaluation
 ├── benchmark.py                # Comprehensive automated benchmark & metrics runner
+├── eval_kanpur_train_test_interactive.py # Dedicated Kanpur station evaluation replay
+├── diagnose_sensor_resolution.py # Empirical sensor resolution & flatline distribution diagnostic
 ├── requirements.txt            # Project dependencies
 ├── DOCUMENTATION.md            # In-depth technical architecture and use-case report
 ├── src/
 │   ├── physics.py              # Magnus-Tetens thermodynamics & storm signature physics
-│   ├── quality_control.py      # WMO-No. 8 plausibility, rate-of-change & persistence tests
+│   ├── quality_control.py      # WMO-No. 8 plausibility, rate-of-change & adaptive persistence
 │   ├── feature_engineering.py  # 29 sliding window, thermodynamic & cyclical features
 │   ├── detector.py             # 5-Tier Hybrid AI Anomaly Engine & XAI
 │   ├── imputer.py              # Physics-constrained real-time data reconstructor
@@ -50,28 +55,40 @@
 streamlit run app.py
 ```
 
-Open `http://localhost:8501` to test the live stream and on-the-fly **Anomaly Injection Studio**.
+* **Live Simulation**: On-the-fly **Fault Injection Studio** (spikes, drifts, stuck sensors, convective storms).
+* **Real CSV Replay**: Select **Kanpur Station 1-Min Telemetry** or upload any station CSV. Configure **Train & Test Date Windows** with one click to calibrate sensor profiles and stream test observations in **Adaptive (15m/1m)** mode.
 
-### 2. Run the Benchmark
-
-```bash
-python benchmark.py
-```
-
-### 3. Run Unit Tests
-
-```bash
-python -m unittest discover tests
-```
-
-### 4. Interactive Terminal Demo
+### 2. Interactive Terminal Demo (Default)
 
 ```bash
 python main.py --demo
 ```
 
-### 5. Evaluate Any CSV File
+### 3. Evaluate Any CSV File with Interactive Train/Test Windows
 
 ```bash
-python main.py --evaluate --file your_station_data.csv
+python main.py --evaluate --file incompass_kanpur_1min.csv
+```
+
+* Prompts interactively for **Training START/END** and **Testing START/END** dates.
+* Automatically validates anti-leakage and chronological order.
+* Calibrates sensor-specific resolution and stuck-run limits from training data.
+* Runs adaptive 15-min normal / 1-min storm replay, and outputs summary + CSV logs.
+
+### 4. Non-Interactive / Scripted Evaluation
+
+```bash
+python main.py --evaluate --file incompass_kanpur_1min.csv --non-interactive
+```
+
+### 5. Run the Automated Benchmark
+
+```bash
+python benchmark.py
+```
+
+### 6. Run Unit Tests
+
+```bash
+python -m unittest discover tests
 ```
