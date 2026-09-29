@@ -70,13 +70,13 @@ class AWSFeatureExtractor:
         p_arr = np.array(self.press_buffer)
         rh_arr = np.array(self.rh_buffer)
 
-        # 1. Thermodynamics
+        # Thermodynamic state metrics
         td = AtmosphericPhysics.dew_point(temp, rh)
         dd = temp - td
         vpd = AtmosphericPhysics.vapor_pressure_deficit(temp, rh)
         theta = AtmosphericPhysics.potential_temperature(temp, press)
 
-        # 2. Lagged differences
+        # Lag differences
         d_t1 = temp - t_arr[-2] if n >= 2 else 0.0
         d_p1 = press - p_arr[-2] if n >= 2 else 0.0
         d_rh1 = rh - rh_arr[-2] if n >= 2 else 0.0
@@ -89,7 +89,7 @@ class AWSFeatureExtractor:
         d_p15 = press - p_arr[-16] if n >= 16 else d_p5
         d_rh15 = rh - rh_arr[-16] if n >= 16 else d_rh5
 
-        # 3. Rolling window statistics (up to last 15 observations)
+        # Rolling statistics over trailing window
         w_len = min(15, n)
         t_sub = t_arr[-w_len:]
         p_sub = p_arr[-w_len:]
@@ -103,13 +103,11 @@ class AWSFeatureExtractor:
         p_z = (press - p_mean) / p_std
         rh_z = (rh - rh_mean) / rh_std
 
-        # 4. Cross-parameter coupling
-        # T and RH tend to change oppositely; d_temp * d_rh is typically negative
+        # Cross-parameter coupling (T and RH inversely correlated)
         t_rh_coupling = d_t5 * d_rh5
-        # Barometric tendency over 30 samples (or available)
         p_30 = press - p_arr[0] if n >= 30 else (press - p_arr[-1])
 
-        # 5. Diurnal cyclical features
+        # Diurnal cyclical encoding
         curr_time = self.timestamp_buffer[-1]
         hour_float = curr_time.hour + curr_time.minute / 60.0
         h_sin = math.sin(2 * math.pi * hour_float / 24.0)

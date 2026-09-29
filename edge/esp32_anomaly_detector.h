@@ -1,9 +1,7 @@
 /**
  * @file esp32_anomaly_detector.h
- * @brief Ultra-lightweight TinyML / Physics-guided Edge Anomaly Detection for ESP32.
- * @details Zero external dependencies. Designed for low-power microcontrollers (ESP32, STM32, RP2040).
- *          Execution time: < 0.1 ms per observation. RAM requirement: < 2 KB.
- *          Target: Smart India Hackathon (SIH 2026) Edge AI Evaluation.
+ * @brief Embedded anomaly detection engine for Automatic Weather Stations.
+ * Low-memory, zero-dependency C implementation for ESP32 / Cortex-M MCUs.
  */
 
 #ifndef ESP32_ANOMALY_DETECTOR_H

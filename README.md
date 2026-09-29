@@ -1,93 +1,98 @@
-# 🌦️ AI/ML Intelligent AWS Anomaly Detection System (SIH 2026)
+# Intelligent AWS Anomaly Detection System (SIH 2026)
 
-> **Smart India Hackathon 2026 — Minimum Viable Product (MVP)**
-> Real-time intelligent anomaly detection for Automatic Weather Stations using **Temperature (°C)**, **Pressure (hPa)**, and **Relative Humidity (%)**.
+Real-time anomaly detection system for Automatic Weather Stations using three core parameters: **Temperature (°C)**, **Atmospheric Pressure (hPa)**, and **Relative Humidity (%)**.
 
----
-
-## 🚀 Key Highlights
-
-* **Physics-Guided Hybrid AI**: Combines WMO-No. 8 standards, atmospheric thermodynamics (Magnus-Tetens Dew Point, Vapor Pressure Deficit), and Multivariate Machine Learning (Isolation Forest).
-* **Sensor-Aware Persistence Calibration**: Automatically learns physical sensor reporting resolution and 99th-percentile flatline run lengths from the training window, eliminating false stuck-sensor alarms on coarsely-quantized barometers.
-* **Adaptive Dual-Rate Replay (15-min Routine / 1-min Storm)**: Operates at standard 15-minute synoptic intervals to save ~93% telemetry and compute bandwidth, and autonomously switches to 1-minute high-frequency mode during convective storms and squalls.
-* **Strict Anti-Leakage Train/Test Engine**: Interactive or CLI-driven date window selection guaranteeing zero data leakage and strict chronological integrity (`Test Start > Train End`).
-* **Genuine Storms vs Sensor Faults**: Cleanly disentangles severe convective downbursts and cold fronts from sensor hardware failures, achieving **0% false alarm rate on genuine storm events**.
-* **Edge AI for ESP32**: Includes a zero-dependency C/C++ embedded library (`edge/esp32_anomaly_detector.h`) with $< 0.1\text{ ms}$ latency and $< 2\text{ KB}$ RAM footprint.
-* **Explainable AI (XAI)**: Feature attribution scores (TreeSHAP) and natural language diagnostic rationale for field engineers.
-* **Predictive Maintenance**: Real-time **Sensor Health Index (SHI: 0–100%)** tracking drift, noise floor, and failure recurrence.
-* **Physics-Constrained Imputation**: Automatically reconstructs corrupted or missing readings within thermodynamic laws ($0 \le RH \le 100\%$, $T_d \le T$).
+The system distinguishes between genuine severe weather events (convective storms, downbursts, cold fronts) and sensor malfunctions (spikes, flatlines, calibration drift, packet dropouts) by coupling WMO-No. 8 quality control with atmospheric thermodynamics and multivariate machine learning.
 
 ---
 
-## 🛠️ Project Structure
+## Key Capabilities
+
+* **Physics-Guided Hybrid AI**: Integrates WMO-No. 8 physical limits, thermodynamic consistency checks (Magnus-Tetens Dew Point, Vapor Pressure Deficit), and multivariate Isolation Forest.
+* **Severe Weather vs. Sensor Fault Disentanglement**: Prevents false alarms during rapid meteorological shifts by evaluating multi-parameter coupling (e.g., simultaneous rain cooling and humidity saturation).
+* **Sensor-Aware Persistence Calibration**: Automatically infers instrument resolution and flatline run distributions from baseline historical data, avoiding false stuck-sensor alerts on coarsely quantized barometers.
+* **Dual-Rate Adaptive Streaming**: Runs at 15-minute intervals during calm conditions to minimize telemetry bandwidth and switches to 1-minute sampling upon detecting rapid atmospheric shifts.
+* **Edge Deployment on Microcontrollers**: Standalone, dependency-free C99 library (`edge/esp32_anomaly_detector.h`) designed for low-power ESP32 and ARM Cortex microcontrollers with sub-millisecond execution and a low memory footprint.
+* **Explainable Diagnostics (XAI)**: Provides TreeSHAP feature attributions and diagnostic explanations for maintenance crews.
+* **Predictive Maintenance**: Tracks signal-to-noise ratio, drift rate, and fault recurrence to compute a continuous Sensor Health Index (SHI: 0–100%).
+* **Thermodynamic Data Imputation**: Fills missing or corrupted points using cubic spline and trend extrapolation bounded by physical constraints ($0 \le RH \le 100\%$, $T_d \le T$).
+
+---
+
+## Repository Structure
 
 ```
-├── app.py                      # Interactive Streamlit Web Dashboard (SkyGuard)
-├── main.py                     # CLI for streaming demo and adaptive CSV evaluation
-├── benchmark.py                # Comprehensive automated benchmark & metrics runner
-├── eval_kanpur_train_test_interactive.py # Dedicated Kanpur station evaluation replay
-├── diagnose_sensor_resolution.py # Empirical sensor resolution & flatline distribution diagnostic
-├── requirements.txt            # Project dependencies
-├── DOCUMENTATION.md            # In-depth technical architecture and use-case report
+├── app.py                      # Streamlit web dashboard entrypoint
+├── index.py                    # Dashboard implementation
+├── main.py                     # CLI for streaming simulation and CSV evaluation
+├── benchmark.py                # Automated benchmark and validation suite
+├── requirements.txt            # Python dependencies
+├── DOCUMENTATION.md            # Technical documentation and use-case analysis
 ├── src/
-│   ├── physics.py              # Magnus-Tetens thermodynamics & storm signature physics
-│   ├── quality_control.py      # WMO-No. 8 plausibility, rate-of-change & adaptive persistence
-│   ├── feature_engineering.py  # 29 sliding window, thermodynamic & cyclical features
-│   ├── detector.py             # 5-Tier Hybrid AI Anomaly Engine & XAI
-│   ├── imputer.py              # Physics-constrained real-time data reconstructor
-│   ├── health_monitor.py       # Predictive maintenance & Sensor Health Index
-│   └── data_simulator.py       # Realistic diurnal AWS generator & Anomaly Studio
+│   ├── physics.py              # Thermodynamic relations and storm signature logic
+│   ├── quality_control.py      # WMO-No. 8 range, step-change, and persistence checks
+│   ├── feature_engineering.py  # Lag, rolling statistics, and cyclical temporal features
+│   ├── detector.py             # Multi-tier anomaly detection engine and XAI
+│   ├── imputer.py              # Physics-constrained value reconstruction
+│   ├── health_monitor.py       # Predictive maintenance and sensor health scoring
+│   └── data_simulator.py       # Weather data generator with anomaly injection
 ├── edge/
-│   ├── esp32_anomaly_detector.h # Standalone C/C++ library for ESP32
-│   └── esp32_anomaly_detector.ino # Arduino/ESP32 sketch
+│   ├── esp32_anomaly_detector.h # Standalone C99/C++ header for embedded targets
+│   └── esp32_anomaly_detector.ino # Arduino/ESP32 example firmware sketch
 └── tests/
-    ├── test_physics.py         # Thermodynamic unit tests
-    └── test_detector.py        # QC, detection, imputation & health unit tests
+    ├── test_physics.py         # Thermodynamic calculations unit tests
+    └── test_detector.py        # QC, detector, and imputation unit tests
 ```
 
 ---
 
-## ⚡ Quickstart
+## Setup and Quickstart
 
-### 1. Launch the Web Dashboard
+### Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+### 1. Web Dashboard
+
+Launch the interactive dashboard to visualize live data streams, test real-time anomaly injection, and replay station datasets:
 
 ```bash
 streamlit run app.py
 ```
 
-* **Live Simulation**: On-the-fly **Fault Injection Studio** (spikes, drifts, stuck sensors, convective storms).
-* **Real CSV Replay**: Select **Kanpur Station 1-Min Telemetry** or upload any station CSV. Configure **Train & Test Date Windows** with one click to calibrate sensor profiles and stream test observations in **Adaptive (15m/1m)** mode.
+### 2. Command-Line Simulation Demo
 
-### 2. Interactive Terminal Demo (Default)
+Run a quick streaming demo in the terminal:
 
 ```bash
 python main.py --demo
 ```
 
-### 3. Evaluate Any CSV File with Interactive Train/Test Windows
+### 3. Evaluate CSV Telemetry Data
+
+Evaluate an existing AWS dataset with train/test window configuration:
 
 ```bash
 python main.py --evaluate --file incompass_kanpur_1min.csv
 ```
 
-* Prompts interactively for **Training START/END** and **Testing START/END** dates.
-* Automatically validates anti-leakage and chronological order.
-* Calibrates sensor-specific resolution and stuck-run limits from training data.
-* Runs adaptive 15-min normal / 1-min storm replay, and outputs summary + CSV logs.
-
-### 4. Non-Interactive / Scripted Evaluation
+For non-interactive scripted execution:
 
 ```bash
 python main.py --evaluate --file incompass_kanpur_1min.csv --non-interactive
 ```
 
-### 5. Run the Automated Benchmark
+### 4. Run Benchmark Suite
+
+Execute the benchmark suite on injected fault scenarios to compute accuracy, precision, recall, and false alarm metrics:
 
 ```bash
 python benchmark.py
 ```
 
-### 6. Run Unit Tests
+### 5. Run Unit Tests
 
 ```bash
 python -m unittest discover tests

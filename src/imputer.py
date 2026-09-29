@@ -1,7 +1,6 @@
 """
-Real-Time Physics-Constrained Imputation Engine for AWS Observations.
-Reconstructs missing or corrupted meteorological sensor readings
-while strictly enforcing thermodynamic boundaries and diurnal continuity.
+Reconstructs missing or flagged meteorological observations using
+trend extrapolation and cubic spline interpolation with thermodynamic bounds.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -14,11 +13,8 @@ from src.physics import AtmosphericPhysics
 
 class AWSImputer:
     """
-    Intelligent Imputation Engine:
-    Reconstructs corrupted measurements using:
-    1. Historical EWMA & Trend extrapolation
-    2. Cubic Spline interpolation over multi-point gaps
-    3. Thermodynamic constraint enforcement (0 <= RH <= 100%, T_d <= T)
+    Interpolates or extrapolates corrupted readings based on trailing
+    valid observations, enforcing physical limits (RH in [0, 100], T_dew <= T).
     """
 
     def __init__(self, window_size: int = 30):

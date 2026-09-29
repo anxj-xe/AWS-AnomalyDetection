@@ -87,11 +87,11 @@ class SensorHealthMonitor:
                 recommendation="Sensor initializing. Performance nominal."
             )
 
-        # 1. Fault rate penalty
-        fault_rate = sum(faults) / n  # 0.0 to 1.0
+        # Penalize repeated fault frequency
+        fault_rate = sum(faults) / n
         fault_penalty = fault_rate * 60.0
 
-        # 2. High-frequency noise level (difference variance)
+        # Assess signal noise via step variance
         diffs = np.diff(raws)
         noise = float(np.std(diffs)) if len(diffs) > 1 else 0.0
 
@@ -103,13 +103,13 @@ class SensorHealthMonitor:
         elif sensor_name == "humidity" and noise > 4.0:
             noise_penalty = min(25.0, (noise - 4.0) * 5.0)
 
-        # 3. Drift penalty
+        # Baseline drift estimation
         drift_rate = 0.0
         drift_penalty = 0.0
         if len(raws) >= 30:
             x = np.arange(len(raws))
             slope, _ = np.polyfit(x, raws, 1)
-            drift_rate = slope * 60.0 * 24.0  # approximate change per day
+            drift_rate = slope * 60.0 * 24.0
             if sensor_name == "temperature" and abs(drift_rate) > 12.0:
                 drift_penalty = min(25.0, (abs(drift_rate) - 12.0) * 0.8)
             elif sensor_name == "humidity" and abs(drift_rate) > 25.0:
@@ -117,7 +117,6 @@ class SensorHealthMonitor:
             elif sensor_name == "pressure" and abs(drift_rate) > 10.0:
                 drift_penalty = min(25.0, (abs(drift_rate) - 10.0) * 1.0)
 
-        # Final health score
         health = max(0.0, min(100.0, 100.0 - (fault_penalty + noise_penalty + drift_penalty)))
 
         # Status categorization & Actionable Recommendations

@@ -12,6 +12,7 @@ import sys
 import time
 import pandas as pd
 import numpy as np
+from typing import Optional, List, Dict, Any, Tuple
 
 # Ensure Windows terminal handles UTF-8 safely
 if hasattr(sys.stdout, 'reconfigure'):
@@ -134,7 +135,7 @@ def ask_datetime(label: str, default: Optional[pd.Timestamp] = None) -> pd.Times
         try:
             return pd.Timestamp(val)
         except Exception:
-            print("❌ Invalid date/time format. Example: 2018-07-01 00:00:00")
+            print("[ERROR] Invalid date/time format. Example: 2018-07-01 00:00:00")
 
 
 def ask_training_and_testing_windows(df: pd.DataFrame, data_min: pd.Timestamp, data_max: pd.Timestamp,
@@ -163,19 +164,19 @@ def ask_training_and_testing_windows(df: pd.DataFrame, data_min: pd.Timestamp, d
             train_end = ask_datetime("Training END date/time", default=def_train_end)
 
         if train_start > train_end:
-            print("❌ Training start cannot be after training end.")
+            print("[ERROR] Training start cannot be after training end.")
             if train_start_arg:
                 sys.exit(1)
             continue
         if train_start < data_min or train_end > data_max:
-            print(f"❌ Training window is outside the available dataset [{data_min} -> {data_max}].")
+            print(f"[ERROR] Training window is outside the available dataset [{data_min} -> {data_max}].")
             if train_start_arg:
                 sys.exit(1)
             continue
 
         train_rows = (df["timestamp"] >= train_start) & (df["timestamp"] <= train_end)
         if train_rows.sum() < 20:
-            print(f"❌ Too few rows ({train_rows.sum()}) inside this training window (need at least 20).")
+            print(f"[ERROR] Too few rows ({train_rows.sum()}) inside this training window (need at least 20).")
             if train_start_arg:
                 sys.exit(1)
             continue
@@ -194,19 +195,19 @@ def ask_training_and_testing_windows(df: pd.DataFrame, data_min: pd.Timestamp, d
             test_end = ask_datetime("Testing END date/time", default=def_test_end)
 
         if test_start > test_end:
-            print("❌ Testing start cannot be after testing end.")
+            print("[ERROR] Testing start cannot be after testing end.")
             if test_start_arg:
                 sys.exit(1)
             continue
         if test_start < data_min or test_end > data_max:
-            print(f"❌ Testing window is outside the available dataset [{data_min} -> {data_max}].")
+            print(f"[ERROR] Testing window is outside the available dataset [{data_min} -> {data_max}].")
             if test_start_arg:
                 sys.exit(1)
             continue
 
         # Anti-leakage / non-overlap check
         if not (train_end < test_start or test_end < train_start):
-            print("\n❌ DATA LEAKAGE / WINDOW COLLISION DETECTED")
+            print("\n[ERROR] DATA LEAKAGE / WINDOW COLLISION DETECTED")
             print(f"Training : {train_start} -> {train_end}")
             print(f"Testing  : {test_start} -> {test_end}")
             print("A model must not be evaluated on observations inside its training period.")
@@ -216,7 +217,7 @@ def ask_training_and_testing_windows(df: pd.DataFrame, data_min: pd.Timestamp, d
 
         # Chronological check
         if test_start <= train_end:
-            print("\n❌ INVALID TIME-SERIES CHRONOLOGY")
+            print("\n[ERROR] INVALID TIME-SERIES CHRONOLOGY")
             print(f"Training ends : {train_end}")
             print(f"Testing starts: {test_start}")
             print("Testing must start strictly AFTER the training window ends to prevent lookahead bias.")
@@ -226,7 +227,7 @@ def ask_training_and_testing_windows(df: pd.DataFrame, data_min: pd.Timestamp, d
 
         test_rows = (df["timestamp"] >= test_start) & (df["timestamp"] <= test_end)
         if test_rows.sum() == 0:
-            print("❌ No data exists inside this testing window.")
+            print("[ERROR] No data exists inside this testing window.")
             if test_start_arg:
                 sys.exit(1)
             continue

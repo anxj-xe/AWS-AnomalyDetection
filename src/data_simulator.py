@@ -109,45 +109,45 @@ class AWSDataSimulator:
         # We place specific anomalies at known times for evaluation
         anom_schedule: Dict[int, Dict[str, Any]] = {}
         if inject_anomalies:
-            # 1. Genuine Severe Convective Storm (Day 1, 16:00) -> 35-minute duration
+            # Baseline convective storm episode (Day 1, 16:00)
             storm_start = 16 * 60 // interval_minutes
             for s in range(storm_start, storm_start + (35 // interval_minutes)):
                 anom_schedule[s] = {"type": "GENUINE_WEATHER_EVENT", "param": None, "start": storm_start}
 
-            # 1b. Genuine Severe Convective Storm in Test Period (Day 2, 18:00) -> 35-minute duration
+            # Evaluation convective storm episode (Day 2, 18:00)
             storm_start_2 = (24 + 18) * 60 // interval_minutes
             for s in range(storm_start_2, storm_start_2 + (35 // interval_minutes)):
                 anom_schedule[s] = {"type": "GENUINE_WEATHER_EVENT", "param": None, "start": storm_start_2}
 
-            # 2. Temperature Spike (Day 2, 09:15)
+            # Temperature transient spike (Day 2, 09:15)
             s_spike_t = (24 + 9) * 60 // interval_minutes + 15
             anom_schedule[s_spike_t] = {"type": "SPIKE", "param": "temperature", "val": 12.5}
 
-            # 3. Barometer Spike (Day 2, 14:30)
+            # Barometer transient spike (Day 2, 14:30)
             s_spike_p = (24 + 14) * 60 // interval_minutes + 30
             anom_schedule[s_spike_p] = {"type": "SPIKE", "param": "pressure", "val": -18.0}
 
-            # 4. Stuck / Frozen Humidity Sensor (Day 3, 03:00 to 05:00)
+            # Frozen humidity sensor (Day 3, 03:00 to 05:00)
             s_stuck_rh = (48 + 3) * 60 // interval_minutes
             for s in range(s_stuck_rh, s_stuck_rh + (120 // interval_minutes)):
                 anom_schedule[s] = {"type": "STUCK_SENSOR", "param": "humidity", "val": 74.2}
 
-            # 5. Temperature Sensor Drift (Day 4, 10:00 to 18:00)
+            # Temperature sensor calibration drift (Day 4, 10:00 to 18:00)
             s_drift_t = (72 + 10) * 60 // interval_minutes
             for s in range(s_drift_t, s_drift_t + (480 // interval_minutes)):
                 elapsed = (s - s_drift_t) * interval_minutes
-                drift_amt = (elapsed / 480.0) * 8.0  # drifts +8°C over 8 hours
+                drift_amt = (elapsed / 480.0) * 8.0
                 anom_schedule[s] = {"type": "SENSOR_DRIFT", "param": "temperature", "val": drift_amt}
 
-            # 6. Physical Out-of-Bounds (Day 4, 22:00)
+            # Out-of-bounds hygrometer reading (Day 4, 22:00)
             s_oob = (72 + 22) * 60 // interval_minutes
             anom_schedule[s_oob] = {"type": "OUT_OF_BOUNDS", "param": "humidity", "val": 118.0}
 
-            # 7. Physical Inconsistency (Day 5, 08:00)
+            # Physically inconsistent thermodynamic state (Day 5, 08:00)
             s_incon = (96 + 8) * 60 // interval_minutes
             anom_schedule[s_incon] = {"type": "PHYSICAL_INCONSISTENCY", "param": "multivariate"}
 
-            # 8. Communication Drop / Missing (Day 5, 12:00)
+            # Telemetry packet dropout / missing reading (Day 5, 12:00)
             s_drop = (96 + 12) * 60 // interval_minutes
             anom_schedule[s_drop] = {"type": "MISSING", "param": "temperature", "val": np.nan}
 

@@ -512,7 +512,7 @@ def ask_datetime(label):
             return pd.Timestamp(value)
         except Exception:
             print()
-            print("❌ Invalid date/time format.")
+            print("[ERROR] Invalid date/time format.")
             print("Use exactly like:")
             print("   2018-07-01 00:00:00")
 
@@ -537,13 +537,13 @@ def ask_training_and_testing_windows(data, data_min, data_max):
 
         if train_start > train_end:
             print()
-            print("❌ Training start cannot be after training end.")
+            print("[ERROR] Training start cannot be after training end.")
             print("Please re-enter the training window.")
             continue
 
         if train_start < data_min or train_end > data_max:
             print()
-            print("❌ Training window is outside the available dataset.")
+            print("[ERROR] Training window is outside the available dataset.")
             print(f"Available range: {data_min} -> {data_max}")
             continue
 
@@ -554,7 +554,7 @@ def ask_training_and_testing_windows(data, data_min, data_max):
 
         if train_rows.sum() == 0:
             print()
-            print("❌ No data exists inside this training window.")
+            print("[ERROR] No data exists inside this training window.")
             continue
 
         break
@@ -570,12 +570,12 @@ def ask_training_and_testing_windows(data, data_min, data_max):
 
         if test_start > test_end:
             print()
-            print("❌ Testing start cannot be after testing end.")
+            print("[ERROR] Testing start cannot be after testing end.")
             continue
 
         if test_start < data_min or test_end > data_max:
             print()
-            print("❌ Testing window is outside the available dataset.")
+            print("[ERROR] Testing window is outside the available dataset.")
             print(f"Available range: {data_min} -> {data_max}")
             continue
 
@@ -589,7 +589,7 @@ def ask_training_and_testing_windows(data, data_min, data_max):
 
         if overlap:
             print()
-            print("❌ DATA LEAKAGE / WINDOW COLLISION DETECTED")
+            print("[ERROR] DATA LEAKAGE / WINDOW COLLISION DETECTED")
             print("-" * 76)
             print("Training and testing periods overlap.")
             print()
@@ -608,7 +608,7 @@ def ask_training_and_testing_windows(data, data_min, data_max):
         # ------------------------------------------------------------
         if test_start <= train_end:
             print()
-            print("❌ INVALID TIME-SERIES ORDER")
+            print("[ERROR] INVALID TIME-SERIES ORDER")
             print("-" * 76)
             print("Testing must start AFTER the training period ends.")
             print()
@@ -629,7 +629,7 @@ def ask_training_and_testing_windows(data, data_min, data_max):
 
         if test_rows.sum() == 0:
             print()
-            print("❌ No data exists inside this testing window.")
+            print("[ERROR] No data exists inside this testing window.")
             continue
 
         break

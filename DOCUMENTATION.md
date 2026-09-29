@@ -1,244 +1,211 @@
 # Intelligent Real-Time AWS Anomaly Detection & Diagnostic System
-### Smart India Hackathon (SIH 2026) — Minimum Viable Product (MVP) Technical Specification & Use-Case Guide
+### Technical Specification and Use-Case Documentation (SIH 2026)
 
 ---
 
-## 1. Executive Summary & Problem Statement Alignment
+## 1. Problem Context and Technical Approach
 
-### The Core Challenge
-Automatic Weather Stations (AWS) deployed by meteorological agencies (such as the India Meteorological Department - IMD) and agricultural networks operate in harsh, unattended environments ranging from high-altitude Himalayan peaks to the Thar desert and coastal cyclone belts.
+Automatic Weather Stations (AWS) deployed across India by agencies like the India Meteorological Department (IMD), state agricultural boards, and airport operators face harsh, remote operating conditions. These stations continuously report three foundational surface variables:
 
-These stations report three fundamental surface meteorological parameters:
 1. **Air Temperature (°C)**
 2. **Atmospheric Pressure (hPa)**
 3. **Relative Humidity (%)**
 
-Existing automated anomaly detection pipelines suffer from two major fatal flaws:
-* **Severe False Alarm Syndrome**: Standard statistical and unsupervised ML models (such as Isolation Forest or Autoencoders) flag rapid atmospheric shifts caused by genuine severe weather events—such as convective thunderstorm downbursts, squall lines, and cold fronts—as sensor faults.
-* **Failure to Detect Subtle Hardware Degradation**: Flatlines (frozen ADCs), intermittent connection noise, calibration drift, and thermodynamic violations often pass undetected through simplistic range filters.
+Existing automated anomaly detection setups tend to fail in two predictable ways:
+* **False alarms during real storms:** Standard statistical outlier checks and generic unsupervised ML algorithms (such as plain Isolation Forest or Autoencoders) flag genuine, abrupt weather events—such as thunderstorm downdrafts, squall lines, and frontal boundaries—as sensor failures.
+* **Undetected sensor faults:** Low-amplitude hardware failures like frozen ADC converters (flatlines), calibration drift, contact noise, and physical inconsistencies often slip past simple min/max bounds.
 
-### Our Solution
-We have built an end-to-end, production-ready **Physics-Guided Hybrid AI/ML Anomaly Detection System** that combines **WMO-No. 8 Standard Quality Control**, **Atmospheric Thermodynamics (Magnus-Tetens Dew Point & VPD)**, **Multivariate Machine Learning**, **Explainable AI (TreeSHAP)**, and **Low-Power Edge TinyML for ESP32 microcontrollers**.
+### Proposed Architecture
+
+To address these challenges, we built a hybrid detection pipeline combining **WMO-No. 8 operational standards**, **thermodynamic consistency checks** (Magnus-Tetens Dew Point, Vapor Pressure Deficit), **multivariate machine learning**, **feature attribution (TreeSHAP)**, and **C-based edge preprocessing for ESP32 hardware**.
 
 ---
 
-## 2. System Architecture & The 5-Tier Detection Pipeline
+## 2. System Architecture
 
 ```
 +-------------------------------------------------------------------------+
-|                  AWS Raw Telemetry Ingestion (1-10 min)                |
+|                  AWS Raw Telemetry Stream (1-15 min)                    |
 |               Temperature (°C) | Pressure (hPa) | Humidity (%)          |
 +------------------------------------+------------------------------------+
                                      |
                                      v
 +-------------------------------------------------------------------------+
-|  TIER 1: Deterministic WMO-No. 8 Standard Quality Control (QC)          |
-|  - Plausibility Range Test ([-40, 60]°C, [800, 1085] hPa, [0, 100]%)   |
-|  - Step / Rate-of-Change Test (Max dT/min, dP/min, dRH/min)             |
-|  - Persistence / Stuck Sensor Deadlock Check (Flatline ADC detection)   |
-|  - Communication Packet Dropout / NaN Tracker                           |
+|  Stage 1: WMO-No. 8 Standard Quality Control                            |
+|  - Plausibility limits ([-40, 60]°C, [800, 1085] hPa, [0, 100]%)        |
+|  - Rate-of-change thresholds (max dT/dt, dP/dt, dRH/dt)                 |
+|  - Persistence and flatline detection with adaptive resolution learning |
+|  - Missing values and communication dropout tracking                    |
 +------------------------------------+------------------------------------+
                                      |
                                      v
 +-------------------------------------------------------------------------+
-|  TIER 2: Severe Meteorological Event Disentangler (Storm vs Fault)      |
-|  - Convective downdraft: dT <= -3.0°C in 30 min (rain cooling)         |
-|  - Saturation surge: dRH >= +20% in 30 min (ending > 85%)              |
-|  - Barometric nose / wake low: |dP| >= 1.2 hPa in 30 min               |
-|  ==> RECLASSIFIES FALSE ALARMS AS "GENUINE_WEATHER_EVENT"               |
+|  Stage 2: Meteorological Event Disentanglement                          |
+|  - Multi-parameter convective cooling and saturation checks             |
+|  - Preserves legitimate storm dynamics as GENUINE_WEATHER_EVENT          |
 +------------------------------------+------------------------------------+
                                      |
                                      v
 +-------------------------------------------------------------------------+
-|  TIER 3: Multivariate Machine Learning Engine                           |
-|  - 29 Engineered Thermodynamic, Temporal & Lag Features                |
-|  - Diurnal cyclical encoding (sin/cos solar hour)                      |
-|  - Calibrated Isolation Forest Anomaly Probability [0.0, 1.0]          |
+|  Stage 3: Multivariate Machine Learning Engine                           |
+|  - 29 thermodynamic, lag, rolling window, and temporal cyclical features|
+|  - Calibrated Isolation Forest anomaly scoring                          |
 +------------------------------------+------------------------------------+
                                      |
                                      v
 +-------------------------------------------------------------------------+
-|  TIER 4: Root-Cause Diagnostic Classifier                               |
+|  Stage 4: Root-Cause Classification                                     |
 |  - NORMAL | GENUINE_WEATHER_EVENT | SPIKE | STUCK_SENSOR                |
 |  - SENSOR_DRIFT | OUT_OF_BOUNDS | PHYSICAL_INCONSISTENCY | MISSING     |
 +------------------------------------+------------------------------------+
                                      |
                                      v
-+------------------------------------+------------------------------------+
-|  TIER 5: Explainable AI & Imputation                                   |
-|  - TreeSHAP Feature Attribution Scores                                 |
-|  - Plain-English Diagnostic Narrative for Maintenance Teams            |
-|  - Physics-Constrained Spline & Cross-Parameter Real-Time Imputation   |
-|  - Continuous Sensor Health Index (SHI: 0-100%) & Prescriptive Action  |
++-------------------------------------------------------------------------+
+|  Stage 5: Explainability, Imputation & Health Monitoring                |
+|  - TreeSHAP feature attribution and contextual diagnostic notes         |
+|  - Physics-constrained cubic spline and trend imputation               |
+|  - Sensor Health Index (SHI: 0-100%) tracking degradation               |
 +-------------------------------------------------------------------------+
 ```
 
 ---
 
-## 3. Mathematical Formulation of Atmospheric Thermodynamics
+## 3. Atmospheric Thermodynamics
 
-To achieve true domain intelligence with only three input parameters, our engine continuously computes the fundamental thermodynamic state vector:
+Rather than relying strictly on unconstrained numerical features, the pipeline evaluates core thermodynamic relationships derived from $T$, $P$, and $RH$:
 
 ### 3.1 Saturation Vapor Pressure $e_s(T)$
-Calculated using the Sonntag formulation of the **Magnus-Tetens Equation** (valid for $-40^\circ\text{C} \le T \le +50^\circ\text{C}$):
+Calculated using the Sonntag (1990) formulation of the Magnus-Tetens equation:
 $$e_s(T) = 6.112 \times \exp\left(\frac{17.67 \cdot T}{T + 243.5}\right) \text{ hPa}$$
 
-For sub-zero conditions over ice ($T < 0^\circ\text{C}$):
+For sub-zero temperatures over ice ($T < 0^\circ\text{C}$):
 $$e_{s,\text{ice}}(T) = 6.112 \times \exp\left(\frac{22.46 \cdot T}{T + 272.62}\right) \text{ hPa}$$
 
 ### 3.2 Actual Vapor Pressure $e$
 $$e = e_s(T) \times \left(\frac{RH}{100}\right) \text{ hPa}$$
 
 ### 3.3 Dew Point Temperature ($T_d$)
-The exact temperature to which air must be cooled at constant pressure to reach complete saturation:
+The temperature to which air must be cooled at constant pressure to reach saturation:
 $$\gamma(T, RH) = \ln\left(\frac{RH}{100}\right) + \frac{17.67 \cdot T}{243.5 + T}$$
 $$T_d = \frac{243.5 \cdot \gamma(T, RH)}{17.67 - \gamma(T, RH)}$$
 
-### 3.4 Dew Point Depression ($DD$) & Thermodynamic Law Enforcement
+### 3.4 Dew Point Depression ($DD$)
 $$DD = T - T_d$$
-* **Physical Law**: $DD \ge 0^\circ\text{C}$ always in ambient unsaturated air.
-* **Detection Rule**: If $DD < -0.2^\circ\text{C}$, the system immediately flags a `PHYSICAL_INCONSISTENCY` (impossible ambient supersaturation), indicating circuit contamination or hygrometer calibration failure.
+* In ambient unsaturated air, $DD \ge 0^\circ\text{C}$ holds by definition.
+* If $DD < -0.2^\circ\text{C}$, the system flags a `PHYSICAL_INCONSISTENCY` (impossible ambient supersaturation), indicating circuit contamination or hygrometer drift.
 
 ### 3.5 Vapor Pressure Deficit ($VPD$)
 $$VPD = e_s(T) - e$$
-High $VPD$ indicates arid, high-evaporative demand; $VPD \to 0$ signifies saturation (fog, cloud base, or condensation).
+High $VPD$ corresponds to dry air with high evaporative demand, while values near zero indicate fog or near-surface condensation.
 
 ### 3.6 Potential Temperature ($\theta$)
-Normalized to the 1000 hPa reference isobar:
+Calculated at the standard 1000 hPa reference level:
 $$\theta = (T + 273.15) \times \left(\frac{1000}{P}\right)^{0.286} - 273.15$$
 
 ---
 
-## 4. Distinguishing Genuine Weather Events vs Sensor Malfunctions
+## 4. Differentiating Storms from Sensor Faults
 
-The central evaluation criterion of the SIH 2026 problem statement is:
-> *"The system should distinguish between genuine meteorological events and sensor/data anomalies while minimizing false alarms."*
+During severe weather (e.g., convective storms, gust fronts, or squall lines), surface weather instruments observe sharp, correlated shifts:
+* Ambient temperature drops $4^\circ\text{C}$ to $8^\circ\text{C}$ in under 20 minutes due to rain-cooled downdrafts.
+* Relative humidity jumps rapidly toward saturation ($85\%\text{--}100\%$).
+* Barometric pressure displays a sharp perturbation or gust front nose ($|\Delta P| \ge 1.0\text{ hPa}$).
 
-### Why Traditional ML Fails
-During a severe convective thunderstorm downburst:
-* Air temperature plummets by **$4^\circ\text{C}$ to $8^\circ\text{C}$ in under 20 minutes** due to rain-cooled downdrafts.
-* Relative humidity jumps from **$50\%$ to $98\%$**.
-* Barometric pressure dips sharply and rebounds by **$1.5\text{--}3.0\text{ hPa}$** (meso-low and gust front nose).
-
-Generic algorithms look only at rate-of-change or statistical outlier scores and trigger emergency sensor failure alarms during the very storm events meteorologists care about most!
-
-### Our Physics-Coupled Disentangler
-Our Tier 2 engine evaluates the multi-parameter gradient vector:
+Standard rate-of-change checks flag these abrupt jumps as spikes. The Stage 2 filter examines the joint multi-parameter vector:
 $$\mathbf{\Delta}_{30} = [\Delta T_{30m}, \Delta P_{30m}, \Delta RH_{30m}]$$
-If:
-$$\Delta T_{30m} \le -2.5^\circ\text{C} \quad \text{AND} \quad \Delta RH_{30m} \ge +15\% \quad \text{AND} \quad |\Delta P_{30m}| \ge 1.0\text{ hPa}$$
-The system recognizes that **convective evaporative cooling is coupled with vapor saturation**, confirms it is a genuine meteorological phenomenon, assigns it `GENUINE_WEATHER_EVENT`, and **suppresses all sensor fault alarms**.
+
+When negative temperature deltas correlate with positive humidity deltas and pressure fluctuations, the reading is marked as `GENUINE_WEATHER_EVENT`, preventing false sensor alarms while preserving critical meteorological data for forecasting models.
 
 ---
 
-## 5. Edge AI: Embedded Low-Power ESP32 Deployment (TinyML)
+## 5. Edge Deployment for ESP32 Microcontrollers
 
-In remote stations (e.g. Ladakh, Thar, oceanic buoys), satellite bandwidth (INSAT / Iridium) and solar power are severely constrained.
+In remote installations (such as mountain passes, desert outposts, and offshore buoys), cellular and satellite bandwidth is limited and power budgets are tight.
 
-### Embedded C Engine (`edge/esp32_anomaly_detector.h`)
-* **Zero Dependencies**: Pure C99/C++ code. No external libraries, no OS dependencies.
-* **RAM Footprint**: $< 1.5\text{ KB}$ (uses a circular ring buffer of 16 observations).
-* **Flash Footprint**: $< 8.5\text{ KB}$.
-* **Execution Latency**: $< 0.08\text{ ms}$ per sample on 240MHz ESP32 Xtensa core.
-* **Bandwidth Optimization**: Only transmits anomalous flags or imputed deltas, reducing cellular/satellite telemetry payload by up to **$95\%$**.
-
-### Sample Telemetry Output on ESP32 Serial/LoRaWAN:
-```json
-{
-  "step": 45,
-  "temp": 22.48,
-  "press": 1009.80,
-  "rh": 97.5,
-  "dew_point": 22.08,
-  "is_anomaly": false,
-  "is_weather_event": true,
-  "status": "Convective Thunderstorm / Downdraft Signature detected",
-  "latency_us": 68
-}
-```
+### Embedded C Library (`edge/esp32_anomaly_detector.h`)
+* **Zero Dependencies:** Pure C99/C++ code. No external libraries or RTOS requirements.
+* **Low Memory Footprint:** Uses less than 1.5 KB RAM with a 16-sample circular buffer, fitting comfortably in constrained microcontrollers.
+* **Low Latency:** Executes in under 0.1 ms per sample on a standard ESP32 at 240 MHz.
+* **Bandwidth Savings:** Can report only anomaly flags or state transitions, reducing satellite transmission costs during calm periods.
 
 ---
 
-## 6. Sensor Health Index (SHI) & Predictive Maintenance
+## 6. Sensor Health Index and Predictive Maintenance
 
-The monitor computes continuous health metrics ($0\text{--}100\%$) for each individual sensor:
-* **Temperature Sensor (Pt100 RTD)**: Tracks contact noise floor, intermittent spikes, and high-frequency delta variance.
-* **Barometric Pressure Sensor (Piezo-resistive)**: Tracks semi-diurnal ($S_2$) tidal amplitude attenuation and vent port clogging.
-* **Hygrometer (Capacitive Polymer)**: Tracks saturation latching, calibration drift, and chemical poisoning.
+The health monitoring module tracks hardware degradation trends:
+* **Temperature (RTD / Thermistor):** Tracks high-frequency signal variance, contact noise floor, and erratic single-sample spikes.
+* **Pressure (Piezoresistive / Barometer):** Tracks diurnal tidal wave attenuation and port blockage.
+* **Humidity (Capacitive Polymer):** Monitors sensor drift, saturation latching (hanging near 100%), and hysteresis errors.
 
-### Prescriptive Maintenance Advice:
-| Health Score | Status | Recommended Field Action |
+### Health Index Tiers:
+| Health Score | Status | Maintenance Recommendation |
 |---|---|---|
-| **$90 - 100\%$** | `EXCELLENT` | Operating nominally. Continue standard periodic telemetry checks. |
-| **$75 - 89\%$** | `GOOD` | Minor signal variance detected. Schedule routine inspection during next cycle. |
-| **$50 - 74\%$** | `DEGRADED` | Clean or replace sintered filter cap; verify capacitive element and RTD shield. |
-| **$< 50\%$** | `CRITICAL` | **Immediate field dispatch required!** Sensor exhibits dead lockup or persistent circuit failure. |
+| **90 - 100%** | Nominal | Sensor operating within standard bounds. Continue routine monitoring. |
+| **75 - 89%** | Good | Minor signal noise detected. Plan inspection during next regular site visit. |
+| **50 - 74%** | Degraded | Clean or replace protective filter cap; verify cable connections and shields. |
+| **< 50%** | Critical | Immediate technician dispatch required. Sensor shows flatline or persistent drift. |
 
 ---
 
-## 7. Real-World SIH Use Cases
+## 7. Real-World Applications
 
-### Use Case 1: India Meteorological Department (IMD) National Network
-* **Context**: 1,500+ AWS stations across India reporting hourly or 10-minute SYNOP data.
-* **Impact**: Eliminates human QC delay; automatically marks corrupted observations before they contaminate Numerical Weather Prediction (NWP) models (WRF/GFS).
+### 1. National Meteorological Networks (e.g., IMD)
+* 1,500+ automatic weather stations reporting synoptic observations.
+* Automates initial quality control before observations enter Numerical Weather Prediction (NWP) data assimilation cycles.
 
-### Use Case 2: Precision Agro-Meteorology (FASAL & PMFBY Crop Insurance)
-* **Context**: Gram-panchayat level AWS stations used for weather-based crop insurance payouts and pest advisories.
-* **Impact**: Prevents fraudulent or erroneous insurance payouts caused by stuck or drifted temperature/humidity sensors while preserving true drought or excessive rain events.
+### 2. Agricultural Weather Networks and Crop Insurance
+* Panchayat-level weather stations used for index-based crop insurance (e.g., PMFBY).
+* Protects against erroneous payout claims caused by stuck or drifted sensors while keeping valid drought or heatwave records intact.
 
-### Use Case 3: Airport Weather Observation Systems (AWOS / METAR)
-* **Context**: Runway threshold sensors providing critical takeoff/landing parameters (temperature, QNH altimeter pressure, dew point).
-* **Impact**: Instantly differentiates runway microbursts and gust fronts from sensor failure, safeguarding flight operations.
+### 3. Aviation Ground Observations (AWOS / METAR)
+* Runway weather monitoring stations providing wind shear, temperature, and altimeter settings.
+* Immediately separates gust front downbursts from sensor failures to support airport safety operations.
 
-### Use Case 4: Disaster Early Warning & Flash Flood Monitoring
-* **Context**: Mountain river catchment stations monitoring sudden cloudburst precursors.
-* **Impact**: High-frequency edge screening triggers immediate local sirens even if satellite uplinks fail.
+### 4. Flood and Landslide Early Warning
+* River basin catchment networks monitoring cloudburst precursors.
+* Edge screening on low-power hardware triggers local sirens even when remote uplinks are temporarily unavailable.
 
 ---
 
-## 8. Benchmark Evaluation & Performance Results
+## 8. Benchmark Evaluation
 
-Evaluated on a 5-day continuous benchmark dataset ($7,200$ observations at 1-minute resolution) with injected ground-truth faults and convective storm events:
+Evaluated across a 5-day continuous dataset (7,200 observations at 1-minute resolution) with injected ground-truth faults:
 
-| Metric | Measured Value | Standard Required |
+| Evaluation Metric | Measured Value | Target Baseline |
 |---|---|---|
-| **Overall Classification Accuracy** | **$98.2\%$** | $> 90.0\%$ |
-| **Spike Detection Rate** | **$100.0\%$** | $> 95.0\%$ |
-| **Stuck Sensor Detection Rate** | **$98.3\%$** | $> 95.0\%$ |
-| **Physical Out-of-Bounds Detection** | **$100.0\%$** | $100.0\%$ |
-| **Physical Inconsistency Detection** | **$100.0\%$** | $> 90.0\%$ |
-| **Missing Data Detection** | **$100.0\%$** | $100.0\%$ |
-| **Storm False Alarm Rate** | **$0.00\%$** | $< 3.0\%$ |
-| **Average Processing Latency** | **$4.6\text{ ms}$ / sample** | $< 50\text{ ms}$ |
-| **Edge ESP32 Execution Latency** | **$0.068\text{ ms}$ / sample** | $< 1.0\text{ ms}$ |
+| **Overall Accuracy** | **98.8%** | > 90.0% |
+| **Precision** | **92.0%** | > 85.0% |
+| **Recall (Detection Rate)** | **97.0%** | > 90.0% |
+| **F1-Score** | **0.945** | > 0.850 |
+| **Specificity** | **99.0%** | > 95.0% |
+| **Average Latency (Python)** | **~8.3 ms** / sample | < 50.0 ms |
+| **Edge Latency (ESP32)** | **< 0.1 ms** / sample | < 1.0 ms |
 
 ---
 
-## 9. Quickstart Guide: Running the Code
+## 9. Running the Pipeline
 
-### 1. Launch the Interactive Web Dashboard
+### Interactive Dashboard
 ```bash
 streamlit run app.py
 ```
-* Access the UI at `http://localhost:8501`.
-* Use the **Anomaly Injection Studio** in the sidebar to test spikes, freezes, drift, and severe storms in real time.
 
-### 2. Run Comprehensive Automated Benchmark
-```bash
-python benchmark.py
-```
-
-### 3. Run Unit Tests
-```bash
-python -m unittest discover tests
-```
-
-### 4. Interactive Command-Line Telemetry Stream
+### Terminal Streaming Demo
 ```bash
 python main.py --demo
 ```
 
-### 5. Process and Evaluate Any Custom CSV File
+### CSV Telemetry Evaluation
 ```bash
-python main.py --evaluate --file your_station_data.csv
+python main.py --evaluate --file incompass_kanpur_1min.csv
+```
+
+### Automated Benchmark Suite
+```bash
+python benchmark.py
+```
+
+### Unit Tests
+```bash
+python -m unittest discover tests
 ```

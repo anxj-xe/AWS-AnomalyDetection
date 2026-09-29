@@ -1,11 +1,9 @@
 /**
  * @file esp32_anomaly_detector.ino
- * @brief Complete ESP32 Arduino Sketch demonstrating real-time edge screening
- *        for Automatic Weather Stations (AWS).
+ * @brief ESP32 firmware sketch for real-time edge anomaly screening.
  * 
- * Hardware: ESP32 Dev Module (or ESP32-S3, ESP32-C3)
- * Sensors: BME280 / SHT31 / Analog RTD or simulated sensor stream
- * SIH 2026 Problem Statement: Edge AI for low-power deployment on ESP32
+ * Hardware: ESP32 / ESP32-S3 / ESP32-C3
+ * Sensors: BME280 / SHT3x or analog RTD bridge
  */
 
 #include <Arduino.h>
@@ -18,11 +16,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("\n=======================================================");
-  Serial.println("  SIH 2026: AWS Intelligent Edge Anomaly Detector");
-  Serial.println("  Platform: ESP32 (Xtensa 32-bit @ 240MHz)");
-  Serial.println("  WMO-No. 8 Standard Embedded Quality Control Active");
-  Serial.println("=======================================================\n");
+  Serial.println("\n-------------------------------------------------------");
+  Serial.println("  AWS Edge Telemetry Monitor (ESP32)");
+  Serial.println("  WMO-No. 8 Standard Quality Control Initialized");
+  Serial.println("-------------------------------------------------------\n");
 
   aws_edge_init(&edge_detector);
 }

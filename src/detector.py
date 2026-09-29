@@ -1,11 +1,7 @@
 """
-Intelligent Hybrid AI/ML Anomaly Detection Engine for Automatic Weather Stations.
-Combines:
-- Tier 1: Deterministic WMO Quality Control
-- Tier 2: Severe Meteorological Event Disentangler (Storm vs Fault)
-- Tier 3: Multivariate Machine Learning (Isolation Forest with calibrated probability)
-- Tier 4: Root Cause Diagnostic Classifier
-- Tier 5: Explainable AI (XAI) Feature Attribution & Natural Language Reasoning
+Multi-stage anomaly detection pipeline for Automatic Weather Stations (AWS).
+Integrates WMO-No. 8 physical limits, thermodynamic consistency checks,
+and multivariate Isolation Forest scoring to separate sensor faults from storms.
 """
 
 from typing import Dict, List, Optional, Tuple, Any
@@ -22,13 +18,13 @@ from src.feature_engineering import AWSFeatureExtractor
 
 @dataclass
 class AnomalyReport:
-    """Complete diagnostic report for a single AWS observation."""
+    """Diagnostic report for a single AWS observation."""
     timestamp: pd.Timestamp
     temperature: float
     pressure: float
     humidity: float
-    is_anomaly: bool                 # True only if genuine sensor/data fault
-    is_weather_event: bool           # True if genuine severe weather (NOT a sensor fault)
+    is_anomaly: bool                 # True only for genuine sensor/data fault
+    is_weather_event: bool           # True if genuine severe weather
     anomaly_type: str                # NORMAL, GENUINE_WEATHER_EVENT, SPIKE, STUCK_SENSOR, SENSOR_DRIFT, OUT_OF_BOUNDS, PHYSICAL_INCONSISTENCY, DATA_DROPOUT
     confidence: float                # 0.0 to 1.0
     severity: float                  # 0.0 to 1.0
@@ -41,9 +37,8 @@ class AnomalyReport:
 
 class AWSAnomalyDetector:
     """
-    Hybrid Physics + AI AWS Anomaly Detector.
-    Learns normal multivariate baseline and isolates sensor malfunctions
-    while maintaining zero false-positives on genuine meteorological events.
+    Evaluates streaming or batch meteorological observations against
+    physical bounds, step thresholds, thermodynamic relations, and ML models.
     """
 
     def __init__(self, contamination: float = 0.03, random_state: int = 42):
@@ -422,12 +417,12 @@ class AWSAnomalyDetector:
             d_press_30 = 0.0
             d_rh_30 = 0.0
 
-        # TIER 2 CHECK: Is this a genuine meteorological event (convective storm/cold front)?
+        # Check for convective storm / squall dynamics over trailing 30m window
         is_storm, storm_conf, storm_desc = AtmosphericPhysics.detect_storm_signature(
             d_temp_30, d_press_30, d_rh_30, window_minutes=30.0
         )
 
-        # TIER 1 CHECK: Deterministic WMO Quality Control
+        # Evaluate physical bounds, rate-of-change, and persistence
         qc_res = self.qc_engine.evaluate_observation(
             curr_temp=temperature,
             curr_pressure=pressure,
@@ -444,14 +439,11 @@ class AWSAnomalyDetector:
             dt_rh=dt_rh
         )
 
-        # Update history and feature buffer
         feat_vec = self.feature_extractor.extract_streaming_features(temperature, pressure, humidity, timestamp)
         self._update_history(temperature, pressure, humidity, timestamp)
 
-        # If deterministic QC failed:
         if qc_res.is_anomaly:
-            # If the step change test triggered, BUT the shift matches a genuine storm signature:
-            # We override the sensor fault and report GENUINE_WEATHER_EVENT!
+            # Reclassify step-rate alarms as legitimate weather if coupled with storm thermodynamics
             if qc_res.anomaly_type == "SPIKE" and is_storm:
                 return self._record_and_return(AnomalyReport(
                     timestamp=timestamp,
@@ -462,14 +454,13 @@ class AWSAnomalyDetector:
                     is_weather_event=True,
                     anomaly_type="GENUINE_WEATHER_EVENT",
                     confidence=storm_conf,
-                    severity=0.0,  # Sensor is healthy!
+                    severity=0.0,
                     faulty_sensor=None,
                     explanation=f"Passed: Meteorological Phenomenon Detected. {storm_desc}",
                     top_features=[("convective_cooling", abs(d_temp_30)), ("humidity_surge", d_rh_30)],
                     thermodynamics=thermo
                 ))
 
-            # Otherwise, genuine deterministic sensor failure!
             top_feats = self._compute_xai_contributions(feat_vec, compute_full_shap=compute_shap)
             return self._record_and_return(AnomalyReport(
                 timestamp=timestamp,
@@ -487,7 +478,6 @@ class AWSAnomalyDetector:
                 thermodynamics=thermo
             ))
 
-        # TIER 2 CHECK: Genuine Severe Meteorological Event (convective storm/cold front)
         if is_storm:
             return self._record_and_return(AnomalyReport(
                 timestamp=timestamp,
@@ -505,7 +495,7 @@ class AWSAnomalyDetector:
                 thermodynamics=thermo
             ))
 
-        # Check for slow sensor drift
+        # Check for gradual sensor drift
         has_drift, drift_param, drift_msg = self._check_drift(temperature, pressure, humidity, delta_mins=delta_mins)
         if has_drift:
             top_feats = self._compute_xai_contributions(feat_vec, compute_full_shap=compute_shap)
@@ -525,7 +515,7 @@ class AWSAnomalyDetector:
                 thermodynamics=thermo
             ))
 
-        # TIER 3 & 4: Machine Learning Anomaly Detection
+        # Multivariate anomaly scoring
         if self.is_fitted:
             # IsolationForest score_samples: values significantly below offset_ indicate anomalous outliers
             raw_score = self.model.score_samples(feat_vec.reshape(1, -1))[0]

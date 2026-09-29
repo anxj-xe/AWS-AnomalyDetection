@@ -16,40 +16,38 @@ from src.imputer import AWSImputer
 
 
 def run_comprehensive_benchmark():
-    print("=" * 80)
-    print("  SIH 2026: AWS ANOMALY DETECTION SYSTEM BENCHMARK EVALUATION")
-    print("  Physics-Guided Hybrid AI vs WMO Standards vs Genuine Weather Events")
-    print("=" * 80)
+    print("=" * 70)
+    print("AWS Anomaly Detection Benchmark")
+    print("WMO Standards, Thermodynamics, and Fault Injections")
+    print("=" * 70)
 
-    # 1. Generate 5-day high-resolution dataset with known injected ground truth
-    print("\n[STEP 1/4] Generating 5-day AWS benchmark dataset with controlled faults...")
+    # 5-day high-resolution dataset with known injected ground truth
+    print("\nGenerating 5-day AWS benchmark dataset...")
     sim = AWSDataSimulator(seed=2026)
     df = sim.generate_historical_dataset(days=5, interval_minutes=1, inject_anomalies=True)
     total_samples = len(df)
-    print(f" -> Generated {total_samples} observations (1-minute resolution).")
+    print(f"Generated {total_samples} observations (1-minute resolution).")
 
-    # Inspect distribution of labels
     label_counts = df['ground_truth_label'].value_counts().to_dict()
-    print(" -> Ground Truth Label Distribution:")
+    print("Label distribution:")
     for lbl, cnt in label_counts.items():
-        print(f"    * {lbl:<26}: {cnt:>5} ({cnt/total_samples*100:5.2f}%)")
+        print(f"  {lbl:<26}: {cnt:>5} ({cnt/total_samples*100:5.2f}%)")
 
-    # 2. Train baseline on Day 1 (which contains clean diurnal cycles + 1 genuine thunderstorm)
-    train_size = 24 * 60  # Day 1
+    # Day 1 baseline
+    train_size = 24 * 60
     train_df = df.iloc[:train_size].copy()
     test_df = df.iloc[train_size:].copy()
 
-    print(f"\n[STEP 2/4] Fitting Hybrid AI Baseline on {train_size} initial observations...")
+    print(f"\nTraining baseline on {train_size} initial observations...")
     detector = AWSAnomalyDetector(contamination=0.03)
     t0 = time.perf_counter()
-    # Filter only clean observations for initial model fitting
     clean_train = train_df[train_df['is_sensor_fault'] == False]
     detector.fit(clean_train)
     fit_time = time.perf_counter() - t0
-    print(f" -> Baseline training completed in {fit_time:.2f}s.")
+    print(f"Baseline fit completed in {fit_time:.2f}s.")
 
-    # 3. Real-time stream evaluation over test set
-    print(f"\n[STEP 3/4] Streaming and evaluating {len(test_df)} observations...")
+    # Replay stream over test period
+    print(f"Streaming and evaluating {len(test_df)} test observations...")
     detector.reset_stream()
 
     y_true_binary = test_df['is_sensor_fault'].tolist()
@@ -77,9 +75,7 @@ def run_comprehensive_benchmark():
     y_pred_binary = [r.is_anomaly for r in reports]
     y_pred_types = [r.anomaly_type for r in reports]
 
-    # 4. Compute Comprehensive Evaluation Metrics
-    print("\n[STEP 4/4] Computing Performance Metrics & Diagnostic Integrity...")
-
+    # 4. Compute Performance Metrics
     p, r, f1, _ = precision_recall_fscore_support(y_true_binary, y_pred_binary, average='binary')
     cm = confusion_matrix(y_true_binary, y_pred_binary)
     tn, fp, fn, tp = cm.ravel()
@@ -88,8 +84,7 @@ def run_comprehensive_benchmark():
     avg_latency = np.mean(latencies)
     p95_latency = np.percentile(latencies, 95)
 
-    # Storm Disentanglement Check:
-    # How many GENUINE_WEATHER_EVENT samples were incorrectly flagged as sensor faults?
+    # Check whether genuine storm samples were flagged as sensor faults
     storm_mask = (test_df['ground_truth_label'] == "GENUINE_WEATHER_EVENT")
     if storm_mask.sum() > 0:
         storm_preds = [y_pred_binary[i] for i, is_s in enumerate(storm_mask) if is_s]
@@ -99,25 +94,25 @@ def run_comprehensive_benchmark():
         storm_false_alarms = 0
         storm_false_alarm_rate = 0.0
 
-    print("\n" + "=" * 80)
-    print("                    EVALUATION METRIC SCORECARD")
-    print("=" * 80)
-    print(f"  Accuracy                        : {accuracy * 100:6.2f}%")
-    print(f"  Precision                       : {p * 100:6.2f}%")
-    print(f"  Recall (Detection Rate)         : {r * 100:6.2f}%")
-    print(f"  F1-Score                        : {f1:6.4f}")
-    print(f"  Specificity (True Negative Rate): {specificity * 100:6.2f}%")
-    print("-" * 80)
-    print(f"  True Positives (Faults Caught)  : {tp:>5}")
-    print(f"  False Positives (False Alarms)  : {fp:>5}")
-    print(f"  True Negatives (Correct Normal) : {tn:>5}")
-    print(f"  False Negatives (Missed Faults) : {fn:>5}")
-    print("-" * 80)
-    print(f"  Genuine Storms Evaluated        : {storm_mask.sum():>5} observations")
-    print(f"  Storm False Alarm Rate          : {storm_false_alarm_rate:6.2f}% ({storm_false_alarms}/{max(1, storm_mask.sum())})")
-    print(f"  Average Processing Latency      : {avg_latency:6.3f} ms / observation")
-    print(f"  95th Percentile Latency (P95)   : {p95_latency:6.3f} ms")
-    print("=" * 80)
+    print("\n" + "-" * 70)
+    print("Performance Summary")
+    print("-" * 70)
+    print(f"Accuracy                        : {accuracy * 100:6.2f}%")
+    print(f"Precision                       : {p * 100:6.2f}%")
+    print(f"Recall (Detection Rate)         : {r * 100:6.2f}%")
+    print(f"F1-Score                        : {f1:6.4f}")
+    print(f"Specificity (True Negative Rate): {specificity * 100:6.2f}%")
+    print("-" * 70)
+    print(f"True Positives (Faults Caught)  : {tp:>5}")
+    print(f"False Positives (False Alarms)  : {fp:>5}")
+    print(f"True Negatives (Normal)         : {tn:>5}")
+    print(f"False Negatives (Missed)        : {fn:>5}")
+    print("-" * 70)
+    print(f"Genuine Storms Evaluated        : {storm_mask.sum():>5} observations")
+    print(f"Storm False Alarm Rate          : {storm_false_alarm_rate:6.2f}% ({storm_false_alarms}/{max(1, storm_mask.sum())})")
+    print(f"Average Latency                 : {avg_latency:6.3f} ms / observation")
+    print(f"P95 Latency                     : {p95_latency:6.3f} ms")
+    print("-" * 70)
 
     # Fault-type specific recall breakdown
     print("\nDetection Rate Breakdown by Specific Fault Class:")
