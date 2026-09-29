@@ -135,20 +135,19 @@ class AtmosphericPhysics:
                                delta_rh: float, 
                                window_minutes: float = 30.0) -> Tuple[bool, float, str]:
         """
-        Identifies whether a sudden shift is a GENUINE severe meteorological event
+        Identifies whether a sudden thermodynamic shift is a GENUINE severe meteorological event
         (e.g., convective thunderstorm downdraft, cold front, or squall line)
-        rather than a sensor malfunction.
+        rather than a sensor malfunction, based on atmospheric thermodynamics (WMO No. 8).
 
         Meteorological physics signature of a convective downburst/cold front:
-        1. Temperature drops sharply (rain-cooled air downdraft: Delta T <= -3.0 deg C in 30 min).
-        2. Relative Humidity surges rapidly towards saturation (Delta RH >= +20% in 30 min, ending > 85%).
-        3. Atmospheric Pressure shows a characteristic 'pressure nose' or rapid drop/jump
-           (|Delta P| >= 1.2 hPa within 30 min, or rapid drop followed by rise).
+        1. Temperature drops sharply (rain-cooled air downdraft: Delta T <= -2.5 deg C in 30 min).
+        2. Relative Humidity surges rapidly towards saturation (Delta RH >= +15% in 30 min).
+        3. Atmospheric Pressure shows a characteristic 'pressure nose' or barometric disturbance
+           (|Delta P| >= 1.0 hPa within 30 min).
 
         Returns:
             (is_genuine_event, confidence_score [0.0 to 1.0], explanation)
         """
-        # Criteria checks
         temp_drop = delta_temp <= -2.5
         rh_surge = delta_rh >= 15.0
         pressure_active = abs(delta_pressure) >= 1.0
@@ -157,21 +156,17 @@ class AtmosphericPhysics:
         reasons = []
 
         if temp_drop:
-            # Score proportional to severity of temperature drop
             score += min(0.4, abs(delta_temp) / 10.0 * 0.4)
             reasons.append(f"Significant convective cooling ({delta_temp:+.1f}°C in {window_minutes:.0f}m)")
 
         if rh_surge:
-            # Score proportional to RH jump
             score += min(0.35, (delta_rh / 40.0) * 0.35)
             reasons.append(f"Rapid humidity surge ({delta_rh:+.1f}% in {window_minutes:.0f}m)")
 
         if pressure_active:
-            # Score proportional to barometric perturbation
             score += min(0.25, (abs(delta_pressure) / 4.0) * 0.25)
             reasons.append(f"Barometric pressure disturbance ({delta_pressure:+.2f} hPa in {window_minutes:.0f}m)")
 
-        # Coupling synergy bonus: If all 3 parameters move in thermodynamic unison
         if temp_drop and rh_surge and pressure_active:
             score = min(1.0, score + 0.15)
             explanation = "Genuine Meteorological Event: Classic Convective Storm/Squall Line signature (" + "; ".join(reasons) + ")"

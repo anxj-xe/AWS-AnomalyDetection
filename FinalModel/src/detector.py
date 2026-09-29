@@ -88,11 +88,25 @@ class AWSAnomalyDetector:
         self.last_pre_event_time_rh: Optional[pd.Timestamp] = None
         self.prev_is_weather_event: bool = False
 
-    def fit(self, normal_df: pd.DataFrame):
+    def calibrate_sensors(self, train_df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        """
+        Learn sensor-specific persistence profiles (resolution, max normal flatline run length,
+        noise floor) from clean station training data, preventing false stuck-sensor alarms.
+        """
+        profile = QualityControlEngine.learn_sensor_persistence_profile(train_df)
+        if profile is not None:
+            self.qc_engine.set_adaptive_profile(profile)
+        return profile
+
+    def fit(self, normal_df: pd.DataFrame, calibrate_persistence: bool = True):
         """
         Train the machine learning baseline on historical clean AWS observations.
         Requires columns: ['temperature', 'pressure', 'humidity'] and optionally 'timestamp'.
+        Optionally learns sensor-specific persistence calibration from the training data.
         """
+        if calibrate_persistence:
+            self.calibrate_sensors(normal_df)
+
         feats = AWSFeatureExtractor.extract_batch_features(normal_df)
         self.model.fit(feats.values)
         self.is_fitted = True
@@ -171,7 +185,7 @@ class AWSAnomalyDetector:
         ranked = sorted(zip(key_names, z_scores), key=lambda x: x[1], reverse=True)[:4]
         return [(name, round(score, 3)) for name, score in ranked]
 
-    def _check_drift(self, t: float, p: float, rh: float) -> Tuple[bool, Optional[str], str]:
+    def _check_drift(self, t: float, p: float, rh: float, delta_mins: float = 1.0) -> Tuple[bool, Optional[str], str]:
         """
         Detect slow sensor drift / systematic calibration offset:
         Combines multi-scale trend analysis with atmospheric thermodynamic decoupling.
@@ -182,15 +196,21 @@ class AWSAnomalyDetector:
         if len(self.history_temp) < 30:
             return False, None, ""
 
+        dt_mins = max(1.0, float(delta_mins))
         w_len = min(40, len(self.history_temp))
+        span_hours = (w_len * dt_mins) / 60.0
+
         t_win = np.array(self.history_temp[-w_len:])
         p_win = np.array(self.history_press[-w_len:])
         rh_win = np.array(self.history_rh[-w_len:])
 
-        # Drift is a subtle, gradual calibration deviation.
-        # Active mesoscale weather events (thunderstorms, fronts) exhibit large dynamic swings
-        # (RH range > 7.0%, T range > 2.5°C, or P range > 4.0 hPa over 40 min).
-        if (rh_win.max() - rh_win.min() > 7.0) or (t_win.max() - t_win.min() > 2.5) or (p_win.max() - p_win.min() > 4.0):
+        # Dynamic range allowed over window (w_len * dt_mins minutes):
+        # Scale with span_hours so normal diurnal cycles in 15m synoptic data (up to 10 hours) don't trigger drift
+        max_p_span = max(4.0, span_hours * 0.8)
+        max_t_span = max(2.5, span_hours * 1.2)
+        max_rh_span = max(7.0, span_hours * 3.5)
+
+        if (rh_win.max() - rh_win.min() > max_rh_span) or (t_win.max() - t_win.min() > max_t_span) or (p_win.max() - p_win.min() > max_p_span):
             return False, None, ""
 
         # Abrupt step changes / spikes invalidate gradual linear drift estimation
@@ -208,48 +228,51 @@ class AWSAnomalyDetector:
             x_dev = x - x.mean()
             w = x_dev / np.sum(x_dev ** 2)
 
-        t_slope = float(np.dot(w, t_win))
-        p_slope = float(np.dot(w, p_win))
-        rh_slope = float(np.dot(w, rh_win))
+        # Slopes normalized to per-minute rate:
+        t_slope = float(np.dot(w, t_win)) / dt_mins
+        p_slope = float(np.dot(w, p_win)) / dt_mins
+        rh_slope = float(np.dot(w, rh_win)) / dt_mins
 
         td_win = np.array([AtmosphericPhysics.dew_point(t_win[i], rh_win[i]) for i in range(w_len)])
-        td_slope = float(np.dot(w, td_win))
+        td_slope = float(np.dot(w, td_win)) / dt_mins
+
+        effective_duration = w_len * dt_mins
 
         # 1. Clear Humidity Sensor Drift:
         # (a) Significant RH trend (|rh_slope| > 0.05 %/min) while temperature is flat or moving in same direction.
         # (b) Dew point drift driven purely by RH without dry-bulb temperature movement.
         if abs(rh_slope) > 0.05 and (abs(t_slope) < 0.008 or (t_slope * rh_slope > 0)):
-            return True, "humidity", f"Uncoupled humidity drift ({rh_slope*w_len:+.1f}% over {w_len}m)"
+            return True, "humidity", f"Uncoupled humidity drift ({rh_slope*effective_duration:+.1f}% over {effective_duration:.0f}m)"
         if abs(td_slope) > 0.015 and abs(t_slope) < 0.005:
-            return True, "humidity", f"Moisture drift: anomalous dew point drift ({td_slope*w_len:+.2f}°C over {w_len}m)"
+            return True, "humidity", f"Moisture drift: anomalous dew point drift ({td_slope*effective_duration:+.2f}°C over {effective_duration:.0f}m)"
 
         # 2. Temperature Drift:
         # (a) Sustained dew point divergence: in clean air, max |td_slope| is < 0.0076 °C/min.
         #     When T drifts, calculated dew point trends systematically (|td_slope| > 0.0080 °C/min) with T trend.
         if abs(td_slope) > 0.0080 and abs(t_slope) > 0.008 and rh_win[-1] < 78.0:
             return True, "temperature", (
-                f"Thermodynamic dew point divergence (dew point slope {td_slope*w_len:+.2f}°C over {w_len}m)"
+                f"Thermodynamic dew point divergence (dew point slope {td_slope*effective_duration:+.2f}°C over {effective_duration:.0f}m)"
             )
         # (b) Uncoupled heating: T rising (slope > 0.012 °C/min) while RH does not fall proportionally (> -0.015 %/min).
         if t_slope > 0.012 and rh_slope > -0.015:
             return True, "temperature", (
-                f"Uncoupled temperature rise ({t_slope*w_len:+.2f}°C over {w_len}m without physical RH depression)"
+                f"Uncoupled temperature rise ({t_slope*effective_duration:+.2f}°C over {effective_duration:.0f}m without physical RH depression)"
             )
         # (c) Afternoon decoupling: RH rising rapidly (> 0.020 %/min) during diurnal cooling, but T fails to cool (t_slope >= 0.000).
         if rh_slope > 0.020 and t_slope >= 0.000:
             return True, "temperature", (
-                f"Thermodynamic decoupling: RH increasing ({rh_slope*w_len:+.1f}%) while temperature fails to cool ({t_slope*w_len:+.2f}°C)"
+                f"Thermodynamic decoupling: RH increasing ({rh_slope*effective_duration:+.1f}%) while temperature fails to cool ({t_slope*effective_duration:+.2f}°C)"
             )
         # (d) Uncoupled cooling / Negative drift: T falling (< -0.018 °C/min) without corresponding physical RH rise (< 0.010 %/min).
         if t_slope < -0.018 and rh_slope < 0.010:
             return True, "temperature", (
-                f"Uncoupled temperature drop ({t_slope*w_len:+.2f}°C over {w_len}m without physical RH rise)"
+                f"Uncoupled temperature drop ({t_slope*effective_duration:+.2f}°C over {effective_duration:.0f}m without physical RH rise)"
             )
 
         # 3. Barometric Pressure Sensor Drift:
         # Persistent pressure slope > 0.020 hPa/min without severe weather
         if abs(p_slope) > 0.020:
-            return True, "pressure", f"Barometric pressure drift ({p_slope*w_len:+.2f} hPa over {w_len}m)"
+            return True, "pressure", f"Barometric pressure drift ({p_slope*effective_duration:+.2f} hPa over {effective_duration:.0f}m)"
 
         return False, None, ""
 
@@ -393,10 +416,12 @@ class AWSAnomalyDetector:
             d_temp_30 = temperature - self.history_temp[temp_idx]
             d_press_30 = pressure - self.history_press[press_idx]
             d_rh_30 = humidity - self.history_rh[rh_idx]
+
         else:
             d_temp_30 = 0.0
             d_press_30 = 0.0
             d_rh_30 = 0.0
+
         # TIER 2 CHECK: Is this a genuine meteorological event (convective storm/cold front)?
         is_storm, storm_conf, storm_desc = AtmosphericPhysics.detect_storm_signature(
             d_temp_30, d_press_30, d_rh_30, window_minutes=30.0
@@ -481,7 +506,7 @@ class AWSAnomalyDetector:
             ))
 
         # Check for slow sensor drift
-        has_drift, drift_param, drift_msg = self._check_drift(temperature, pressure, humidity)
+        has_drift, drift_param, drift_msg = self._check_drift(temperature, pressure, humidity, delta_mins=delta_mins)
         if has_drift:
             top_feats = self._compute_xai_contributions(feat_vec, compute_full_shap=compute_shap)
             return self._record_and_return(AnomalyReport(

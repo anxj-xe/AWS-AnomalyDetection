@@ -269,10 +269,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+@st.cache_data(show_spinner=False)
 def load_and_normalize_aws_csv(file_or_path):
     """
     Intelligently maps and normalizes heterogeneous real AWS CSV datasets.
     Handles variable headers (Temp, Temperature, TEMP_C, SLP, MSLP, Pressure, RH, Humidity, Date_Time, etc.)
+    Uses fast format parsing and caching for instant response.
     """
     if isinstance(file_or_path, str):
         df_raw = pd.read_csv(file_or_path)
@@ -309,7 +311,14 @@ def load_and_normalize_aws_csv(file_or_path):
 
     clean_df = pd.DataFrame()
     if 'timestamp' in col_map:
-        clean_df['timestamp'] = pd.to_datetime(df_raw[col_map['timestamp']], errors='coerce')
+        raw_ts = df_raw[col_map['timestamp']]
+        try:
+            clean_df['timestamp'] = pd.to_datetime(raw_ts, format='%Y-%m-%d %H:%M:%S')
+        except Exception:
+            try:
+                clean_df['timestamp'] = pd.to_datetime(raw_ts, format='ISO8601')
+            except Exception:
+                clean_df['timestamp'] = pd.to_datetime(raw_ts, errors='coerce')
     else:
         clean_df['timestamp'] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_raw), freq='15min')
 
@@ -345,6 +354,7 @@ if 'initialized' not in st.session_state:
     st.session_state.csv_stream_idx = 0
     st.session_state.loaded_csv_df = None
     st.session_state.active_csv_name = ""
+    st.session_state.replay_finished = False
 
     # Seed initial 30 observations at 15-minute intervals
     base_time = pd.Timestamp.now() - pd.Timedelta(minutes=30 * 15)
@@ -364,6 +374,245 @@ if 'initialized' not in st.session_state:
         })
     st.session_state.stream_step = 30
     st.session_state.initialized = True
+
+
+def process_next_step(interval_mins=15):
+    """Advance the streaming simulation or CSV replay by one observation."""
+    st.session_state.stream_step += 1
+    step = st.session_state.stream_step
+
+    is_csv_active = (
+        st.session_state.get("data_source_type") == "Real AWS Dataset Streamer (CSV Replay)"
+        and st.session_state.loaded_csv_df is not None
+        and len(st.session_state.loaded_csv_df) > 0
+    )
+
+    if is_csv_active:
+        df_src = st.session_state.get("loaded_csv_test_slice")
+        if df_src is None or len(df_src) == 0:
+            df_src = st.session_state.loaded_csv_df
+
+        idx = st.session_state.csv_stream_idx
+        if idx >= len(df_src):
+            st.session_state.is_streaming = False
+            st.session_state.replay_finished = True
+            return
+
+        row = df_src.iloc[idx]
+        t = float(row["temperature"])
+        p = float(row["pressure"])
+        rh = float(row["humidity"])
+        if pd.notna(row["timestamp"]):
+            curr_time = row["timestamp"]
+        else:
+            base_t = st.session_state.history[-1]["timestamp"] if st.session_state.history else pd.Timestamp.now()
+            curr_time = base_t + pd.Timedelta(minutes=interval_mins)
+
+        # Dynamic interval resolution: 1m in storm mode, 15m in nominal
+        freq_mode = st.session_state.get("freq_mode", "Adaptive (Auto-Detect: 1m Storm / 15m Routine)")
+        latest_hist_rec = st.session_state.history[-1] if st.session_state.history else None
+        is_storm_condition = (
+            (latest_hist_rec and latest_hist_rec.get("is_weather_event", False))
+            or (st.session_state.active_fault == "GENUINE_WEATHER_EVENT")
+        )
+
+        if "Adaptive" in freq_mode and not is_storm_condition and pd.notna(row["timestamp"]):
+            curr_ts = row["timestamp"]
+            next_target = curr_ts + pd.Timedelta(minutes=15)
+            next_idx = idx + 1
+            while next_idx < len(df_src):
+                if df_src.iloc[next_idx]["timestamp"] >= next_target:
+                    break
+                next_idx += 1
+            st.session_state.csv_stream_idx = next_idx
+        else:
+            st.session_state.csv_stream_idx += 1
+
+        if st.session_state.csv_stream_idx >= len(df_src):
+            st.session_state.is_streaming = False
+            st.session_state.replay_finished = True
+    else:
+        base_t = st.session_state.history[-1]["timestamp"] if st.session_state.history else pd.Timestamp.now()
+        curr_time = base_t + pd.Timedelta(minutes=interval_mins)
+        t, p, rh = st.session_state.simulator.generate_point(curr_time)
+
+    # Apply injected fault if active
+    fault = st.session_state.active_fault
+    param = st.session_state.active_fault_param
+
+    if fault == "SPIKE":
+        if param == "temperature":
+            t += st.session_state.active_fault_value
+        elif param == "pressure":
+            p += st.session_state.active_fault_value
+        elif param == "humidity":
+            rh = min(100.0, rh + st.session_state.active_fault_value)
+        st.session_state.active_fault = None
+
+    elif fault == "STUCK_SENSOR":
+        if st.session_state.active_fault_value is None:
+            st.session_state.active_fault_value = t if param == "temperature" else (p if param == "pressure" else rh)
+        if param == "temperature":
+            t = st.session_state.active_fault_value
+        elif param == "pressure":
+            p = st.session_state.active_fault_value
+        elif param == "humidity":
+            rh = st.session_state.active_fault_value
+
+    elif fault == "SENSOR_DRIFT":
+        drift_rate = 0.04 if interval_mins <= 2 else 0.15
+        if param == "temperature":
+            st.session_state.active_fault_value += drift_rate
+            t += st.session_state.active_fault_value
+        elif param == "humidity":
+            st.session_state.active_fault_value += (drift_rate * 2.5)
+            rh = min(100.0, max(0.0, rh + st.session_state.active_fault_value))
+        elif param == "pressure":
+            st.session_state.active_fault_value += (drift_rate * 0.75)
+            p += st.session_state.active_fault_value
+
+    elif fault == "GENUINE_WEATHER_EVENT":
+        t -= 6.2
+        p -= 2.6
+        rh = 97.5
+        st.session_state.active_fault = None
+
+    elif fault == "OUT_OF_BOUNDS":
+        if param == "humidity":
+            rh = st.session_state.active_fault_value
+        elif param == "temperature":
+            t = 78.0
+        st.session_state.active_fault = None
+
+    elif fault == "MISSING":
+        t = np.nan
+        st.session_state.active_fault = None
+
+    # Run AI Detection Engine
+    report: AnomalyReport = st.session_state.detector.process_observation(
+        temperature=t, pressure=p, humidity=rh, timestamp=curr_time, compute_shap=True
+    )
+
+    # Run Physics-Constrained Imputer
+    if report.is_anomaly:
+        imp = st.session_state.imputer.impute_point(t, p, rh, report.faulty_sensor, step)
+        st.session_state.health_monitor.record_observation(t, p, rh, report.faulty_sensor)
+    else:
+        st.session_state.imputer.update_clean_history(t, p, rh, step)
+        imp = {
+            "imputed_temperature": t,
+            "imputed_pressure": p,
+            "imputed_humidity": rh,
+            "was_imputed": False
+        }
+        st.session_state.health_monitor.record_observation(t, p, rh, None)
+
+    record = {
+        "step": step,
+        "timestamp": curr_time,
+        "temperature": t, "pressure": p, "humidity": rh,
+        "imp_temp": imp["imputed_temperature"], "imp_press": imp["imputed_pressure"], "imp_rh": imp["imputed_humidity"],
+        "is_anomaly": report.is_anomaly,
+        "is_weather_event": report.is_weather_event,
+        "anomaly_type": report.anomaly_type,
+        "confidence": report.confidence,
+        "faulty_sensor": report.faulty_sensor,
+        "explanation": report.explanation,
+        "thermo": report.thermodynamics,
+        "top_features": report.top_features
+    }
+
+    st.session_state.history.append(record)
+    if len(st.session_state.history) > 120:
+        st.session_state.history.pop(0)
+
+    if report.is_anomaly or report.is_weather_event:
+        st.session_state.anomaly_log.insert(0, record)
+        if len(st.session_state.anomaly_log) > 50:
+            st.session_state.anomaly_log.pop()
+
+
+def run_batch_test_window(train_subset, test_subset):
+    """
+    Run fast adaptive evaluation on test_subset, calibrated by train_subset.
+    Matches the terminal workflow from main.py --evaluate.
+    """
+    profile = st.session_state.detector.calibrate_sensors(train_subset)
+    st.session_state.calibrated_profile = profile
+
+    train_15 = train_subset[train_subset['timestamp'].dt.minute.isin([0, 15, 30, 45])]
+    if len(train_15) < 30:
+        train_15 = train_subset
+    if len(train_15) > 1000:
+        train_15 = train_15.iloc[-1000:]
+
+    st.session_state.detector.fit(train_15, calibrate_persistence=False)
+    st.session_state.detector.reset_stream()
+
+    test_df = test_subset.sort_values("timestamp").reset_index(drop=True)
+    n_test = len(test_df)
+    timestamps = test_df["timestamp"].tolist()
+
+    history = []
+    anomaly_log = []
+    mode = "15MIN"
+    next_15 = timestamps[0]
+    switches = 0
+
+    for pos in range(n_test):
+        ts = timestamps[pos]
+        if mode == "15MIN" and ts < next_15:
+            continue
+
+        row = test_df.iloc[pos]
+        t = float(row["temperature"])
+        p = float(row["pressure"])
+        rh = float(row["humidity"])
+
+        rep = st.session_state.detector.process_observation(t, p, rh, ts)
+        rec = {
+            "step": pos,
+            "timestamp": ts,
+            "temperature": t, "pressure": p, "humidity": rh,
+            "imp_temp": t, "imp_press": p, "imp_rh": rh,
+            "is_anomaly": rep.is_anomaly,
+            "is_weather_event": rep.is_weather_event,
+            "anomaly_type": rep.anomaly_type,
+            "confidence": rep.confidence,
+            "faulty_sensor": rep.faulty_sensor,
+            "explanation": rep.explanation,
+            "thermo": rep.thermodynamics,
+            "top_features": rep.top_features
+        }
+        history.append(rec)
+        if rep.is_anomaly or rep.is_weather_event:
+            anomaly_log.insert(0, rec)
+
+        if rep.is_weather_event:
+            if mode == "15MIN":
+                mode = "1MIN"
+                switches += 1
+        elif mode == "1MIN":
+            mode = "15MIN"
+            switches += 1
+            next_15 = ts + pd.Timedelta(minutes=15)
+        else:
+            next_15 = ts + pd.Timedelta(minutes=15)
+
+    st.session_state.history = history[-120:] if len(history) > 120 else history
+    st.session_state.anomaly_log = anomaly_log[:100]
+    st.session_state.loaded_csv_test_slice = test_df
+    st.session_state.csv_stream_idx = n_test
+    st.session_state.replay_finished = True
+    st.session_state.is_streaming = False
+    st.session_state.batch_eval_summary = {
+        "total_test_rows": n_test,
+        "processed_samples": len(history),
+        "anomalies": sum(1 for r in history if r["is_anomaly"]),
+        "weather_events": sum(1 for r in history if r["is_weather_event"]),
+        "telemetry_savings_pct": (1.0 - len(history) / max(1, n_test)) * 100.0,
+        "mode_switches": switches
+    }
 
 
 # Sidebar Navigation & Station Selection (No Emojis)
@@ -386,8 +635,9 @@ data_source_type = st.sidebar.radio(
 
 if data_source_type == "Real AWS Dataset Streamer (CSV Replay)":
     csv_presets = {
-        "Upload Real Station CSV...": "CUSTOM",
-        "Benchmark Dataset (7,200 Observations)": "data/aws_benchmark_dataset.csv"
+        "Kanpur Station 1-Min Telemetry (incompass_kanpur_1min.csv)": "incompass_kanpur_1min.csv",
+        "Benchmark Dataset (7,200 Observations)": "data/aws_benchmark_dataset.csv",
+        "Upload Real Station CSV...": "CUSTOM"
     }
     preset_choice = st.sidebar.selectbox("Select AWS Dataset", list(csv_presets.keys()))
     csv_target = csv_presets[preset_choice]
@@ -400,6 +650,7 @@ if data_source_type == "Real AWS Dataset Streamer (CSV Replay)":
                     df_loaded = load_and_normalize_aws_csv(custom_file)
                     st.session_state.loaded_csv_df = df_loaded
                     st.session_state.active_csv_name = custom_file.name
+                    st.session_state.loaded_csv_test_slice = None
                     st.session_state.csv_stream_idx = 0
                     st.sidebar.success(f"Loaded {len(df_loaded)} valid records!")
     else:
@@ -409,16 +660,100 @@ if data_source_type == "Real AWS Dataset Streamer (CSV Replay)":
                     df_loaded = load_and_normalize_aws_csv(csv_target)
                     st.session_state.loaded_csv_df = df_loaded
                     st.session_state.active_csv_name = csv_target
+                    st.session_state.loaded_csv_test_slice = None
                     st.session_state.csv_stream_idx = 0
                     st.sidebar.success(f"Loaded {len(df_loaded)} rows from {os.path.basename(csv_target)}")
 
     if st.session_state.loaded_csv_df is not None and len(st.session_state.loaded_csv_df) > 0:
-        total_rows = len(st.session_state.loaded_csv_df)
+        df_src = st.session_state.loaded_csv_df
+        has_dates = 'timestamp' in df_src.columns and pd.notna(df_src['timestamp'].iloc[0])
+
+        if has_dates:
+            with st.sidebar.expander("Train / Test Date Windows", expanded=True):
+                min_ts = df_src['timestamp'].min()
+                max_ts = df_src['timestamp'].max()
+                st.caption(f"Dataset Range: {min_ts.strftime('%Y-%m-%d')} to {max_ts.strftime('%Y-%m-%d')}")
+
+                total_span = max_ts - min_ts
+                default_train_end = min_ts + total_span * 0.25
+                default_test_start = default_train_end + pd.Timedelta(minutes=15)
+
+                col_tw1, col_tw2 = st.columns(2)
+                t_start_d = col_tw1.date_input("Train Start", min_ts.date(), min_value=min_ts.date(), max_value=max_ts.date(), key="train_sd")
+                t_end_d = col_tw2.date_input("Train End", default_train_end.date(), min_value=min_ts.date(), max_value=max_ts.date(), key="train_ed")
+
+                col_ts1, col_ts2 = st.columns(2)
+                test_start_d = col_ts1.date_input("Test Start", default_test_start.date(), min_value=min_ts.date(), max_value=max_ts.date(), key="test_sd")
+                test_end_d = col_ts2.date_input("Test End", max_ts.date(), min_value=min_ts.date(), max_value=max_ts.date(), key="test_ed")
+
+                col_b1, col_b2 = st.columns(2)
+                btn_stream = col_b1.button("Calibrate & Replay", width='stretch')
+                btn_batch = col_b2.button("Run Batch Eval", width='stretch')
+
+                if btn_stream or btn_batch:
+                    t_s_dt = pd.Timestamp(t_start_d)
+                    t_e_dt = pd.Timestamp(t_end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                    test_s_dt = pd.Timestamp(test_start_d)
+                    test_e_dt = pd.Timestamp(test_end_d) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+                    if t_s_dt >= t_e_dt:
+                        st.error("Training start must be before training end.")
+                    elif test_s_dt <= t_e_dt:
+                        st.error("Testing must start strictly AFTER training ends (Zero Data Leakage).")
+                    else:
+                        train_subset = df_src[(df_src['timestamp'] >= t_s_dt) & (df_src['timestamp'] <= t_e_dt)].copy()
+                        test_subset = df_src[(df_src['timestamp'] >= test_s_dt) & (df_src['timestamp'] <= test_e_dt)].copy()
+
+                        if len(train_subset) < 20:
+                            st.error(f"Selected training window has only {len(train_subset)} rows (need >= 20).")
+                        elif len(test_subset) == 0:
+                            st.error("Selected testing window contains no observations.")
+                        else:
+                            if btn_batch:
+                                with st.spinner(f"Evaluating {len(test_subset):,} observations in adaptive 15m/1m mode..."):
+                                    run_batch_test_window(train_subset, test_subset)
+                                st.sidebar.success(f"Batch eval complete! {len(test_subset):,} test rows processed.")
+                            else:
+                                with st.spinner("Calibrating sensor profiles and fitting baseline..."):
+                                    profile = st.session_state.detector.calibrate_sensors(train_subset)
+                                    st.session_state.calibrated_profile = profile
+
+                                    train_15 = train_subset[train_subset['timestamp'].dt.minute.isin([0, 15, 30, 45])]
+                                    if len(train_15) < 30:
+                                        train_15 = train_subset
+                                    if len(train_15) > 1000:
+                                        train_15 = train_15.iloc[-1000:]
+
+                                    st.session_state.detector.fit(train_15, calibrate_persistence=False)
+                                    st.session_state.detector.reset_stream()
+                                    st.session_state.loaded_csv_test_slice = test_subset.reset_index(drop=True)
+                                    st.session_state.csv_stream_idx = 0
+                                    st.session_state.history = []
+                                    st.session_state.anomaly_log = []
+                                    st.session_state.stream_step = 0
+                                    st.session_state.replay_finished = False
+                                    st.session_state.batch_eval_summary = None
+                                    st.session_state.step_once = True
+                                    st.sidebar.success(f"Calibrated on {len(train_subset):,} rows! Ready to replay {len(test_subset):,} test rows.")
+
+            if st.session_state.get("calibrated_profile"):
+                with st.sidebar.expander("Learned Sensor Calibration", expanded=False):
+                    prof = st.session_state.calibrated_profile
+                    for s_k, p_val in prof.items():
+                        st.markdown(f"**{s_k.capitalize()}:**")
+                        st.caption(f"Resolution: `{p_val['minimum_real_change']:.4f}` | Max Normal Flatline: `{p_val['normal_run_q99']:.1f}` | Stuck Threshold: `{p_val['learned_run_limit']}` readings")
+
+        target_df = st.session_state.get("loaded_csv_test_slice")
+        if target_df is None or len(target_df) == 0:
+            target_df = st.session_state.loaded_csv_df
+
+        total_rows = len(target_df)
         curr_idx = st.session_state.csv_stream_idx
-        progress_val = min(1.0, curr_idx / total_rows)
+        progress_val = min(1.0, curr_idx / max(1, total_rows))
         st.sidebar.progress(progress_val)
-        st.sidebar.caption(f"CSV Replay: Row {curr_idx} / {total_rows} ({progress_val*100:.1f}%)")
-        if st.sidebar.button("Reset CSV Replay", width='stretch'):
+        label_prefix = "Test Window Replay" if st.session_state.get("loaded_csv_test_slice") is not None else "CSV Replay"
+        st.sidebar.caption(f"{label_prefix}: Row {curr_idx} / {total_rows} ({progress_val*100:.1f}%)")
+        if st.sidebar.button("Reset Replay", width='stretch'):
             st.session_state.csv_stream_idx = 0
             st.sidebar.info("Replay reset to row 0.")
 
@@ -541,132 +876,14 @@ if st.sidebar.button("Trigger Selected Scenario", width='stretch'):
         if not st.session_state.is_streaming:
             st.session_state.step_once = True
 
-def process_next_step(interval_mins=15):
-    st.session_state.stream_step += 1
-    step = st.session_state.stream_step
-
-    is_csv_active = (
-        data_source_type == "Real AWS Dataset Streamer (CSV Replay)"
-        and st.session_state.loaded_csv_df is not None
-        and len(st.session_state.loaded_csv_df) > 0
-    )
-
-    if is_csv_active:
-        df_src = st.session_state.loaded_csv_df
-        idx = st.session_state.csv_stream_idx % len(df_src)
-        row = df_src.iloc[idx]
-        t = float(row["temperature"])
-        p = float(row["pressure"])
-        rh = float(row["humidity"])
-        if pd.notna(row["timestamp"]):
-            curr_time = row["timestamp"]
-        else:
-            curr_time = st.session_state.history[-1]["timestamp"] + pd.Timedelta(minutes=interval_mins)
-        st.session_state.csv_stream_idx += 1
-    else:
-        curr_time = st.session_state.history[-1]["timestamp"] + pd.Timedelta(minutes=interval_mins)
-        t, p, rh = st.session_state.simulator.generate_point(curr_time)
-
-    # Apply injected fault if active
-    fault = st.session_state.active_fault
-    param = st.session_state.active_fault_param
-
-    if fault == "SPIKE":
-        if param == "temperature":
-            t += st.session_state.active_fault_value
-        elif param == "pressure":
-            p += st.session_state.active_fault_value
-        elif param == "humidity":
-            rh = min(100.0, rh + st.session_state.active_fault_value)
-        st.session_state.active_fault = None  # Single-point spike reset
-
-    elif fault == "STUCK_SENSOR":
-        if st.session_state.active_fault_value is None:
-            st.session_state.active_fault_value = t if param == "temperature" else (p if param == "pressure" else rh)
-        if param == "temperature":
-            t = st.session_state.active_fault_value
-        elif param == "pressure":
-            p = st.session_state.active_fault_value
-        elif param == "humidity":
-            rh = st.session_state.active_fault_value
-
-    elif fault == "SENSOR_DRIFT":
-        drift_rate = 0.04 if interval_mins <= 2 else 0.15
-        if param == "temperature":
-            st.session_state.active_fault_value += drift_rate
-            t += st.session_state.active_fault_value
-        elif param == "humidity":
-            st.session_state.active_fault_value += (drift_rate * 2.5)
-            rh = min(100.0, max(0.0, rh + st.session_state.active_fault_value))
-        elif param == "pressure":
-            st.session_state.active_fault_value += (drift_rate * 0.75)
-            p += st.session_state.active_fault_value
-
-    elif fault == "GENUINE_WEATHER_EVENT":
-        # Severe Thunderstorm: sharp temperature drop (-6.2 C), pressure nose, RH near saturation (97.5%)
-        t -= 6.2
-        p -= 2.6
-        rh = 97.5
-        st.session_state.active_fault = None  # Front passage pulse
-
-    elif fault == "OUT_OF_BOUNDS":
-        if param == "humidity":
-            rh = st.session_state.active_fault_value
-        elif param == "temperature":
-            t = 78.0
-        st.session_state.active_fault = None
-
-    elif fault == "MISSING":
-        t = np.nan
-        st.session_state.active_fault = None
-
-    # Run AI Detection Engine
-    report: AnomalyReport = st.session_state.detector.process_observation(
-        temperature=t, pressure=p, humidity=rh, timestamp=curr_time, compute_shap=True
-    )
-
-    # Run Physics-Constrained Imputer
-    if report.is_anomaly:
-        imp = st.session_state.imputer.impute_point(t, p, rh, report.faulty_sensor, step)
-        st.session_state.health_monitor.record_observation(t, p, rh, report.faulty_sensor)
-    else:
-        st.session_state.imputer.update_clean_history(t, p, rh, step)
-        imp = {
-            "imputed_temperature": t,
-            "imputed_pressure": p,
-            "imputed_humidity": rh,
-            "was_imputed": False
-        }
-        st.session_state.health_monitor.record_observation(t, p, rh, None)
-
-    record = {
-        "step": step,
-        "timestamp": curr_time,
-        "temperature": t, "pressure": p, "humidity": rh,
-        "imp_temp": imp["imputed_temperature"], "imp_press": imp["imputed_pressure"], "imp_rh": imp["imputed_humidity"],
-        "is_anomaly": report.is_anomaly,
-        "is_weather_event": report.is_weather_event,
-        "anomaly_type": report.anomaly_type,
-        "confidence": report.confidence,
-        "faulty_sensor": report.faulty_sensor,
-        "explanation": report.explanation,
-        "thermo": report.thermodynamics,
-        "top_features": report.top_features
-    }
-
-    st.session_state.history.append(record)
-    if len(st.session_state.history) > 120:
-        st.session_state.history.pop(0)
-
-    if report.is_anomaly or report.is_weather_event:
-        st.session_state.anomaly_log.insert(0, record)
-        if len(st.session_state.anomaly_log) > 50:
-            st.session_state.anomaly_log.pop()
 
 # Step execution
 if st.session_state.step_once:
     process_next_step(interval_mins=active_interval_mins)
     st.session_state.step_once = False
+
+if not st.session_state.history:
+    process_next_step(interval_mins=active_interval_mins)
 
 latest = st.session_state.history[-1]
 prev = st.session_state.history[-2] if len(st.session_state.history) >= 2 else latest
@@ -674,6 +891,26 @@ prev = st.session_state.history[-2] if len(st.session_state.history) >= 2 else l
 # Main Header
 st.markdown('<div class="brand-title">SkyGuard by Vyoma</div>', unsafe_allow_html=True)
 st.markdown('<div class="brand-subtitle">Automatic Weather Station (AWS) Intelligent Anomaly Detection & Diagnostics System • Physics-Guided AI • WMO-No. 8 Standards</div>', unsafe_allow_html=True)
+
+if st.session_state.get("batch_eval_summary"):
+    s = st.session_state.batch_eval_summary
+    fault_color = "#F87171" if s['anomalies'] > 0 else "#34D399"
+    st.markdown(f"""
+    <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #3B82F6; border-radius: 8px; padding: 14px 18px; margin-bottom: 18px;">
+        <div style="color: #60A5FA; font-weight: 700; text-transform: uppercase; font-size: 0.76rem; letter-spacing: 0.08em; margin-bottom: 6px;">Adaptive Test Window Evaluation Summary</div>
+        <div style="display: flex; gap: 24px; flex-wrap: wrap; font-family: 'IBM Plex Mono', monospace;">
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Test Rows:</span> <strong style="color: #FFFFFF;">{s['total_test_rows']:,}</strong></div>
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Evaluated Points:</span> <strong style="color: #FFFFFF;">{s['processed_samples']:,}</strong></div>
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Bandwidth Saved:</span> <strong style="color: #34D399;">{s['telemetry_savings_pct']:.1f}%</strong></div>
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Sensor Faults:</span> <strong style="color: {fault_color};">{s['anomalies']:,}</strong></div>
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Severe Storms:</span> <strong style="color: #FBBF24;">{s['weather_events']:,}</strong></div>
+            <div><span style="color: #94A3B8; font-size: 0.78rem;">Rate Switches:</span> <strong style="color: #E2E8F0;">{s['mode_switches']:,}</strong></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+if st.session_state.get("replay_finished", False):
+    st.info("Test Window Replay Finished: All test observations evaluated.")
 
 # Dynamic Hero Box for Recent Reading (Tint changes only for Hero Box)
 if latest["is_anomaly"]:
