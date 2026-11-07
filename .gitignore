@@ -1,0 +1,8 @@
+# Ignore VS Code configuration folder
+.vscode/
+
+# Ignore IntelliJ / WebStorm / PyCharm configuration folder
+.idea/
+# Ignore Python bytecode / cache folders
+__pycache__/
+*.pyc
